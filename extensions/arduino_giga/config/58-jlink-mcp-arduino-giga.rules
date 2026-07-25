@@ -1,0 +1,7 @@
+# Arduino boards: final restrictive USB and CDC permissions are evaluated
+# before vendor rules that may otherwise install world-writable modes.
+SUBSYSTEM=="usb", ATTR{idVendor}=="2341", MODE:="0660", GROUP:="plugdev", TAG+="uaccess"
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="2341", MODE:="0660", GROUP:="dialout", TAG+="uaccess"
+
+# USB-serial companion fixtures used by the GIGA validation bundle.
+SUBSYSTEM=="tty", KERNEL=="ttyUSB*", MODE:="0660", GROUP:="dialout", TAG+="uaccess"

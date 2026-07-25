@@ -22,7 +22,7 @@ from jlink_mcp.backends.commander import (
 from jlink_mcp.backends.gdb import GDBBackend, GDBSession, _free_port
 from jlink_mcp.backends.gui import GUIBackend, GUIProcess
 from jlink_mcp.backends.serial import SerialBackend
-from jlink_mcp.models import DeviceSelector, TargetCore, TargetState
+from jlink_mcp.models import DeviceSelector, TargetState
 from jlink_mcp.runner import ProcessRunner
 
 from conftest import make_result
@@ -170,7 +170,7 @@ def _fake_executable(settings, name: str) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_commander_backend_command_file_and_argv(settings) -> None:
+async def test_commander_backend_command_file_and_argv(settings, target_registry) -> None:
     executable = _fake_executable(settings, "JLinkExe")
     captured = {}
 
@@ -180,12 +180,16 @@ async def test_commander_backend_command_file_and_argv(settings) -> None:
             captured.update(kwargs)
             return make_result(stdout=COMMANDER_962, backend="jlink-commander")
 
-    backend = CommanderBackend(settings, Runner())
-    selector = DeviceSelector(probe_serial="000802008248", core=TargetCore.M4)
+    backend = CommanderBackend(settings, Runner(), target_registry)
+    selector = DeviceSelector(
+        probe_serial="000802008248",
+        target_profile="sample_target",
+        core="secondary",
+    )
     result = await backend.execute(["H", "Mem32 0x20000000 1"], selector=selector)
     assert result.parsed["connected"]
     assert captured["argv"][0] == str(executable)
-    assert "STM32H747XI_M4" in captured["argv"]
+    assert "SAMPLE_SECONDARY" in captured["argv"]
     command_file = Path(result.evidence_paths[0])
     assert command_file.read_text() == "H\nMem32 0x20000000 1\nExit\n"
     assert command_file.stat().st_mode & 0o777 == 0o600
@@ -267,7 +271,10 @@ def _gdb_session(gdb=None) -> GDBSession:
     return GDBSession(
         session_id="session",
         selector=DeviceSelector(
-            probe_serial="000802008248", board_serial="BOARD", core=TargetCore.M7
+            probe_serial="000802008248",
+            board_serial="BOARD",
+            target_profile="sample_target",
+            core="primary",
         ),
         gdb_port=1111,
         swo_port=2222,
@@ -281,8 +288,8 @@ def _gdb_session(gdb=None) -> GDBSession:
 
 
 @pytest.mark.asyncio
-async def test_gdb_command_states_errors_timeout_and_info(settings) -> None:
-    backend = GDBBackend(settings, ProcessRunner())
+async def test_gdb_command_states_errors_timeout_and_info(settings, target_registry) -> None:
+    backend = GDBBackend(settings, ProcessRunner(), target_registry)
     backend._sessions["session"] = _gdb_session()
     result = await backend.command("session", "-exec-continue")
     assert result.ok and result.target_state_after == TargetState.RUNNING
@@ -300,8 +307,8 @@ async def test_gdb_command_states_errors_timeout_and_info(settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_gdb_capture_port_success_and_failure(settings) -> None:
-    backend = GDBBackend(settings, ProcessRunner())
+async def test_gdb_capture_port_success_and_failure(settings, target_registry) -> None:
+    backend = GDBBackend(settings, ProcessRunner(), target_registry)
     received = bytearray()
 
     async def handler(reader, writer):

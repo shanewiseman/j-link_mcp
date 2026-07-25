@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jlink-mcp-giga-protocol-bridge"
+version = "0.1.0"
+description = "Universal protocol bridge extension for J-Link MCP and Arduino GIGA"
+readme = "README.md"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "jlink-mcp>=0.2.0,<1",
+  "jlink-mcp-arduino-giga>=0.1.0,<1",
+]
+
+[project.entry-points."jlink_mcp.extensions"]
+giga_protocol_bridge = "jlink_mcp_giga_protocol_bridge:extension"
+
+[tool.uv.sources]
+jlink-mcp = { workspace = true }
+jlink-mcp-arduino-giga = { workspace = true }
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "pytest-cov>=6,<8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jlink_mcp_giga_protocol_bridge"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+  "hardware: requires an attached J-Link and Arduino GIGA",
+  "hil: exercises the MCP API against physical protocol fixtures",
+  "destructive: may change persistent target state",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["jlink_mcp_giga_protocol_bridge"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80

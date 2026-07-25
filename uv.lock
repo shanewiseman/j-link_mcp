@@ -2,6 +2,13 @@ version = 1
 revision = 3
 requires-python = "==3.12.*"
 
+[manifest]
+members = [
+    "jlink-mcp",
+    "jlink-mcp-arduino-giga",
+    "jlink-mcp-giga-protocol-bridge",
+]
+
 [[package]]
 name = "annotated-types"
 version = "0.8.0"
@@ -328,7 +335,7 @@ wheels = [
 
 [[package]]
 name = "jlink-mcp"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -379,6 +386,56 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34,<1" },
 ]
 provides-extras = ["test", "gui"]
+
+[[package]]
+name = "jlink-mcp-arduino-giga"
+version = "0.1.0"
+source = { editable = "extensions/arduino_giga" }
+dependencies = [
+    { name = "jlink-mcp" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jlink-mcp", editable = "." },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8,<10" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25,<2" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6,<8" },
+]
+provides-extras = ["test"]
+
+[[package]]
+name = "jlink-mcp-giga-protocol-bridge"
+version = "0.1.0"
+source = { editable = "extensions/giga_protocol_bridge" }
+dependencies = [
+    { name = "jlink-mcp" },
+    { name = "jlink-mcp-arduino-giga" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jlink-mcp", editable = "." },
+    { name = "jlink-mcp-arduino-giga", editable = "extensions/arduino_giga" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8,<10" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25,<2" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6,<8" },
+]
+provides-extras = ["test"]
 
 [[package]]
 name = "jsonpointer"

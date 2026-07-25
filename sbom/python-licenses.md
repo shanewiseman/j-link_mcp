@@ -26,7 +26,7 @@
 | idna                      | 3.18        | BSD-3-Clause                                            | https://github.com/kjd/idna                                    |
 | iniconfig                 | 2.3.0       | MIT                                                     | https://github.com/pytest-dev/iniconfig                        |
 | isoduration               | 20.11.0     | ISC License (ISCL)                                      | https://github.com/bolsote/isoduration                         |
-| jlink-mcp                 | 0.1.0       | PolyForm-Noncommercial-1.0.0                            | UNKNOWN                                                        |
+| jlink-mcp                 | 0.2.0       | PolyForm-Noncommercial-1.0.0                            | UNKNOWN                                                        |
 | jsonpointer               | 3.1.1       | BSD License                                             | https://github.com/stefankoegl/python-json-pointer             |
 | jsonschema                | 4.26.0      | MIT                                                     | https://github.com/python-jsonschema/jsonschema                |
 | jsonschema-specifications | 2025.9.1    | MIT                                                     | https://github.com/python-jsonschema/jsonschema-specifications |
@@ -71,7 +71,6 @@
 | typing_extensions         | 4.16.0      | PSF-2.0                                                 | https://github.com/python/typing_extensions                    |
 | tzdata                    | 2026.3      | Apache-2.0                                              | https://github.com/python/tzdata                               |
 | uri-template              | 1.3.0       | MIT License                                             | https://gitlab.linss.com/open-source/python/uri-template       |
-| uv                        | 0.8.15      | Apache Software License; MIT License                    | https://pypi.org/project/uv/                                   |
 | uvicorn                   | 0.51.0      | BSD-3-Clause                                            | https://uvicorn.dev/                                           |
 | uvloop                    | 0.22.1      | Apache Software License; MIT License                    | UNKNOWN                                                        |
 | watchfiles                | 1.2.0       | MIT License                                             | https://github.com/samuelcolvin/watchfiles                     |

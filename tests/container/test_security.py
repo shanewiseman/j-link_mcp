@@ -50,3 +50,5 @@ def test_container_non_root_restricted_and_no_proprietary_payload() -> None:
     )
     assert "JLinkExe" not in files
     assert "/opt/segger" not in files
+    console = _compose("exec", "-T", "mcp", "jlink-mcp", "--help")
+    assert "serve" in console

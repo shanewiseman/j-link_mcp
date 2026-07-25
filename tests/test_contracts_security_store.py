@@ -17,11 +17,9 @@ from jlink_mcp.models import (
     DependencyCheck,
     DependencyReport,
     DeviceSelector,
-    TargetCore,
     ValidationReport,
     ValidationStep,
 )
-from jlink_mcp.profiles import get_profile, jlink_device
 from jlink_mcp.security import (
     UnsafeCommand,
     validate_application_args,
@@ -36,12 +34,21 @@ from conftest import make_result
 
 
 def test_selector_and_result_contracts(manifest) -> None:
-    selector = DeviceSelector(probe_serial=" 00-AB_12 ", core=TargetCore.M4)
+    empty_selector = DeviceSelector(probe_serial=None, target_profile=None)
+    assert empty_selector.probe_serial is None
+    assert empty_selector.target_profile is None
+    selector = DeviceSelector(
+        probe_serial=" 00-AB_12 ",
+        target_profile="sample_target",
+        core="secondary",
+    )
     assert selector.probe_serial == "00-AB_12"
-    assert selector.core == TargetCore.M4
+    assert selector.core == "secondary"
     for invalid in ("", "!bad", "has space"):
         with pytest.raises(ValidationError):
             DeviceSelector(probe_serial=invalid)
+        with pytest.raises(ValidationError):
+            DeviceSelector(target_profile=invalid)
     with pytest.raises(ValidationError):
         DeviceSelector(speed_khz=1)
     result = make_result()
@@ -72,18 +79,27 @@ def test_selector_and_result_contracts(manifest) -> None:
     assert not validation.ok
 
 
+def test_extension_allowlist_accepts_compose_environment_syntax(monkeypatch) -> None:
+    monkeypatch.setenv("JLINK_MCP_EXTENSIONS", "")
+    assert Settings(_env_file=None).extensions == []
+    monkeypatch.setenv(
+        "JLINK_MCP_EXTENSIONS", "arduino_giga,giga_protocol_bridge"
+    )
+    assert Settings(_env_file=None).extensions == [
+        "arduino_giga",
+        "giga_protocol_bridge",
+    ]
+
+
 def test_udev_policy_precedes_vendor_final_assignment() -> None:
     repository = Path(__file__).resolve().parents[1]
     rules = (repository / "config/59-jlink-mcp.rules").read_text()
     installer = (repository / "scripts/install-udev-rules.sh").read_text()
     assert 'ATTR{idVendor}=="1366", MODE:="0660", GROUP:="plugdev"' in rules
-    assert 'ATTR{idVendor}=="2341", MODE:="0660", GROUP:="plugdev"' in rules
-    assert 'KERNEL=="ttyACM*"' in rules and 'GROUP:="dialout"' in rules
+    assert 'ATTR{idVendor}=="2341"' not in rules
+    assert 'KERNEL=="ttyACM*"' not in rules
     assert "destination=/etc/udev/rules.d/59-jlink-mcp.rules" in installer
-    assert "legacy_destination=/etc/udev/rules.d/99-jlink-mcp.rules" in installer
     assert "sudo -v" in installer
-    assert 'verify_node "$node" plugdev' in installer
-    assert 'verify_node "$node" dialout' in installer
     assert 'if [ "$failed" -ne 0 ]' in installer
 
 
@@ -101,7 +117,7 @@ def test_repository_license_is_copyable_but_noncommercial() -> None:
     assert "source-available, not OSI open source" in readme
 
 
-def test_artifact_and_profiles(tmp_path: Path) -> None:
+def test_artifact_and_profiles(tmp_path: Path, target_registry) -> None:
     path = tmp_path / "firmware.bin"
     path.write_bytes(b"abc")
     digest = hashlib.sha256(b"abc").hexdigest()
@@ -109,12 +125,12 @@ def test_artifact_and_profiles(tmp_path: Path) -> None:
     assert artifact.size == 3
     assert artifact.metadata == {"x": 1}
     assert sha256_file(path, block_size=1) == digest
-    profile = get_profile("arduino_giga_r1")
-    assert profile.fqbn == "arduino:mbed_giga:giga"
-    assert jlink_device(profile.name, TargetCore.M7) == "STM32H747XI_M7"
-    assert jlink_device(profile.name, TargetCore.M4) == "STM32H747XI_M4"
+    profile = target_registry.get_profile("sample_target")
+    assert profile.display_name == "Sample target"
+    assert target_registry.jlink_device(profile.id, "primary") == "SAMPLE_PRIMARY"
+    assert target_registry.jlink_device(profile.id, "secondary") == "SAMPLE_SECONDARY"
     with pytest.raises(ValueError, match="unknown target profile"):
-        get_profile("unknown")
+        target_registry.get_profile("unknown")
 
 
 def test_settings_token_and_path_confinement(settings: Settings, tmp_path: Path, monkeypatch) -> None:

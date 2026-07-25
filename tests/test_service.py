@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import copy
 import asyncio
-import json
-from pathlib import Path
-
 import pytest
 
 import jlink_mcp.service as service_module
-from jlink_mcp.models import DependencyReport, DeviceSelector, TargetCore
-from jlink_mcp.bridge_models import WifiConnectRequest
+from jlink_mcp.extensions.api import ExtensionRegistry
+from jlink_mcp.models import DependencyReport, DeviceSelector
+from jlink_mcp.profiles import CoreProfile, TargetProfile
 from jlink_mcp.service import JLinkService, TargetSelectionError
 
 from conftest import make_result
@@ -17,14 +15,37 @@ from conftest import make_result
 
 PROBE = "000802008248"
 BOARD = "0045002B3333511632363530"
+PROFILE = "sample_target"
+PRIMARY = "primary"
+SECONDARY = "secondary"
+SAMPLE_PROFILE = TargetProfile(
+    id=PROFILE,
+    display_name="Sample target",
+    cores={
+        PRIMARY: CoreProfile(
+            id=PRIMARY,
+            jlink_device="SAMPLE_PRIMARY",
+            expected_core="Cortex-M7",
+            expected_cpuid=0x411FC271,
+        ),
+        SECONDARY: CoreProfile(
+            id=SECONDARY,
+            jlink_device="SAMPLE_SECONDARY",
+            expected_core="Cortex-M4",
+            expected_cpuid=0x410FC241,
+        ),
+    },
+    default_core=PRIMARY,
+    expected_dpidr=0x6BA02477,
+)
 
 
-def identity(core: TargetCore = TargetCore.M7):
+def identity(core: str = PRIMARY):
     return make_result(
         parsed={
             "connected": True,
-            "core": "Cortex-M7" if core == TargetCore.M7 else "Cortex-M4",
-            "cpuid": "0x411FC271" if core == TargetCore.M7 else "0x410FC241",
+            "core": "Cortex-M7" if core == PRIMARY else "Cortex-M4",
+            "cpuid": "0x411FC271" if core == PRIMARY else "0x410FC241",
             "dpidr": "0x6BA02477",
             "target_voltage": 3.284,
             "probe_serial": PROBE,
@@ -37,7 +58,9 @@ def identity(core: TargetCore = TargetCore.M7):
 
 @pytest.fixture
 def service(settings, manifest, monkeypatch):
-    instance = JLinkService(settings)
+    registry = ExtensionRegistry()
+    registry.targets.register_profile(SAMPLE_PROFILE)
+    instance = JLinkService(settings, registry)
     monkeypatch.setattr(instance, "capabilities", lambda: copy.deepcopy(manifest))
     monkeypatch.setattr(instance, "_serial_port_ready", lambda path: True)
 
@@ -48,21 +71,39 @@ def service(settings, manifest, monkeypatch):
     return instance
 
 
-def selector(core=TargetCore.M7):
-    return DeviceSelector(probe_serial=PROBE, board_serial=BOARD, core=core)
+def selector(core: str = PRIMARY):
+    return DeviceSelector(
+        probe_serial=PROBE,
+        board_serial=BOARD,
+        target_profile=PROFILE,
+        core=core,
+    )
+
+
+def test_target_operation_requires_a_registered_profile(settings, manifest, monkeypatch) -> None:
+    instance = JLinkService(settings, ExtensionRegistry())
+    monkeypatch.setattr(instance, "capabilities", lambda: copy.deepcopy(manifest))
+    with pytest.raises(TargetSelectionError, match="no target profile is registered"):
+        instance.resolve_selector(None)
 
 
 def test_capability_and_doctor_merge_sparse_recent_probe_evidence(
     settings, manifest, monkeypatch
 ) -> None:
-    instance = JLinkService(settings)
+    registry = ExtensionRegistry()
+    registry.targets.register_profile(SAMPLE_PROFILE)
+    instance = JLinkService(settings, registry)
     monkeypatch.setattr(
-        service_module, "capability_manifest", lambda settings: copy.deepcopy(manifest)
+        service_module,
+        "capability_manifest",
+        lambda settings, targets: copy.deepcopy(manifest),
     )
     monkeypatch.setattr(
         service_module,
         "dependency_report",
-        lambda settings: DependencyReport(checks=[], manifest=copy.deepcopy(manifest)),
+        lambda settings, targets: DependencyReport(
+            checks=[], manifest=copy.deepcopy(manifest)
+        ),
     )
     licensed = make_result()
     licensed.probe_identity = {
@@ -93,7 +134,7 @@ def test_capability_and_doctor_merge_sparse_recent_probe_evidence(
 def test_selector_unique_explicit_ambiguity_and_audit_reconnect(service, manifest, monkeypatch) -> None:
     resolved = service.resolve_selector(None)
     assert resolved.probe_serial == PROBE and resolved.board_serial == BOARD
-    assert service.resolve_selector(selector()).core == TargetCore.M7
+    assert service.resolve_selector(selector()).core == PRIMARY
     with pytest.raises(TargetSelectionError, match="not attached"):
         service.resolve_selector(DeviceSelector(probe_serial="WRONG"))
 
@@ -228,93 +269,6 @@ async def test_serial_waits_for_post_identity_usb_renumeration(
         "ready:/dev/ttyACM0",
         "exchange:/dev/ttyACM0",
     ]
-
-
-@pytest.mark.asyncio
-async def test_protocol_bridge_identity_handshake_and_secret_audit(
-    service, monkeypatch, tmp_path
-) -> None:
-    events: list[str] = []
-
-    async def preflight(resolved, lease_id):
-        events.append(f"identity:{resolved.core.value}")
-        result = identity(resolved.core)
-        result.session_id = lease_id
-        return result
-
-    async def bridge_request(port, request, **kwargs):
-        events.append(f"bridge:{port}:{kwargs.get('operation') or request.operation}")
-        if kwargs.get("operation") == "get_status":
-            return make_result(
-                backend="giga-protocol-bridge",
-                parsed={
-                    "bridge": {
-                        "status": 0,
-                        "data_base64": "",
-                        "metadata": {
-                            "firmware_version": "1.0.0",
-                            "wire_version": 1,
-                            "build_id": "fixture",
-                            "source_sha256": "a" * 64,
-                            "supported_interfaces": ["spi", "i2c", "uart", "can", "usb", "wifi", "ble", "gpio"],
-                            "safe_pins": ["D22"],
-                            "transfer_limits": {"application_payload": 64000},
-                            "connections": {},
-                            "queue_depths": {},
-                            "overflow_counts": {},
-                            "active_resource_conflicts": [],
-                        },
-                    }
-                },
-            )
-        assert kwargs["secrets_to_send"] == {
-            "ssid": "fixture-net",
-            "password": "secret123",
-        }
-        return make_result(
-            backend="giga-protocol-bridge",
-            parsed={
-                "bridge": {
-                    "status": 0,
-                    "data_base64": "",
-                    "metadata": {"connected": True},
-                }
-            },
-        )
-
-    profiles = tmp_path / "bridge-profiles.json"
-    profiles.write_text(
-        json.dumps(
-            {"wifi": {"lab": {"ssid": "fixture-net", "password": "secret123"}}}
-        ),
-        encoding="utf-8",
-    )
-    profiles.chmod(0o600)
-    service.settings.bridge_profiles_file = profiles
-    monkeypatch.setattr(service, "_identity_preflight", preflight)
-    monkeypatch.setattr(service.bridge, "request", bridge_request)
-
-    status = await service.protocol_bridge_status(selector=selector())
-    assert status.wire_version == 1 and status.firmware_version == "1.0.0"
-    connected = await service.protocol_bridge_control(
-        WifiConnectRequest(operation="wifi_connect", profile="lab"),
-        selector=selector(),
-    )
-    assert connected.protocol == "wifi"
-    assert events == [
-        "identity:m7",
-        "bridge:/dev/ttyACM0:get_status",
-        "identity:m7",
-        "bridge:/dev/ttyACM0:wifi_connect",
-    ]
-    audit = json.dumps(service.store.list_operations(limit=20), sort_keys=True)
-    assert "fixture-net" not in audit and "secret123" not in audit
-    assert '"profile": "lab"' in audit
-    assert service.store.verify_chain() == (True, None)
-
-    with pytest.raises(ValueError, match="runs on the GIGA M7"):
-        await service.protocol_bridge_status(selector=selector(TargetCore.M4))
-
 
 def test_identity_gate_all_failure_reasons(service) -> None:
     invalid = identity()

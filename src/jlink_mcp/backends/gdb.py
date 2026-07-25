@@ -16,7 +16,7 @@ from pygdbmi.IoManager import GdbTimeoutError
 
 from ..config import Settings
 from ..models import CommandResult, DeviceSelector, TargetState
-from ..profiles import jlink_device
+from ..profiles import TargetRegistry
 from ..runner import ProcessRunner
 from ..security import validate_gdb_command
 
@@ -44,9 +44,12 @@ class GDBSession:
 class GDBBackend:
     name = "jlink-gdb"
 
-    def __init__(self, settings: Settings, runner: ProcessRunner) -> None:
+    def __init__(
+        self, settings: Settings, runner: ProcessRunner, targets: TargetRegistry
+    ) -> None:
         self.settings = settings
         self.runner = runner
+        self.targets = targets
         self._sessions: dict[str, GDBSession] = {}
         self._guard = asyncio.Lock()
 
@@ -69,7 +72,7 @@ class GDBBackend:
             "-select",
             f"USB={selector.probe_serial}",
             "-device",
-            jlink_device(selector.target_profile, selector.core),
+            self.targets.jlink_device(selector.target_profile, selector.core),
             "-if",
             selector.interface,
             "-speed",
@@ -96,7 +99,7 @@ class GDBBackend:
         )
         await self._wait_for_port(gdb_port, server, timeout=timeout)
         gdb = GdbController(
-            command=[self.settings.arm_gdb, "--interpreter=mi2", "--nx", "--quiet"]
+            command=[self.settings.gdb_client, "--interpreter=mi2", "--nx", "--quiet"]
         )
         if elf_path:
             gdb.write(f'-file-exec-and-symbols "{elf_path}"', timeout_sec=timeout)
@@ -191,7 +194,7 @@ class GDBBackend:
             target_identity={
                 "board_serial": session.selector.board_serial,
                 "target_profile": session.selector.target_profile,
-                "core": session.selector.core.value,
+                "core": session.selector.core,
             },
         )
 
@@ -264,7 +267,7 @@ class GDBBackend:
             target_identity={
                 "board_serial": session.selector.board_serial,
                 "target_profile": session.selector.target_profile,
-                "core": session.selector.core.value,
+                "core": session.selector.core,
             },
         )
 
