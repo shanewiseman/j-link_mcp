@@ -1,0 +1,5 @@
+services:
+  mcp:
+    environment:
+      JLINK_MCP_ENABLE_NOVNC: "true"
+      JLINK_MCP_NOVNC_LISTEN: "127.0.0.1:6080"

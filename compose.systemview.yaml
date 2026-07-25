@@ -1,0 +1,6 @@
+services:
+  mcp:
+    volumes:
+      - "${SYSTEMVIEW_ROOT:?set SYSTEMVIEW_ROOT to a licensed SystemView installation}:/opt/segger/SystemView:ro"
+    environment:
+      JLINK_MCP_SYSTEMVIEW_ROOT: /opt/segger/SystemView

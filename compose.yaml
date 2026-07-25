@@ -1,0 +1,50 @@
+name: jlink-mcp
+
+services:
+  mcp:
+    image: jlink-mcp:local
+    build:
+      context: .
+      args:
+        APP_UID: "${HOST_UID:-1000}"
+        APP_GID: "${HOST_GID:-1000}"
+    network_mode: host
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    group_add:
+      - "${PLUGDEV_GID:-46}"
+      - "${DIALOUT_GID:-20}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    device_cgroup_rules:
+      - "c 189:* rwm"
+      - "c 166:* rwm"
+      - "c 188:* rwm"
+    volumes:
+      - .:/workspace:rw
+      - ./state:/state:rw
+      - ./state/segger:/segger-state:rw
+      - "${SEGGER_ROOT:-/opt/SEGGER/JLink_V962}:/opt/segger/JLink:ro"
+      - /dev/bus/usb:/dev/bus/usb:rw
+      - /dev:/host/dev:ro
+      - /sys/bus/usb/devices:/sys/bus/usb/devices:ro
+      - ./.token:/run/secrets/jlink_mcp_token:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,uid=${HOST_UID:-1000},gid=${HOST_GID:-1000}
+      - /run:rw,noexec,nosuid,nodev,size=32m,uid=${HOST_UID:-1000},gid=${HOST_GID:-1000}
+    environment:
+      JLINK_MCP_HOST: 127.0.0.1
+      JLINK_MCP_TEST_TARGET_DISPOSABLE: "${TEST_TARGET_DISPOSABLE:-false}"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s

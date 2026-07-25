@@ -1,0 +1,6 @@
+services:
+  mcp:
+    volumes:
+      - "${OZONE_ROOT:?set OZONE_ROOT to a licensed Ozone installation}:/opt/segger/Ozone:ro"
+    environment:
+      JLINK_MCP_OZONE_ROOT: /opt/segger/Ozone

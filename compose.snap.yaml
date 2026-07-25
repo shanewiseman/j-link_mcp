@@ -1,0 +1,6 @@
+# Docker installed from the Canonical snap currently rejects every initial exec
+# when no-new-privileges is enabled. Use this overlay only for that runtime; all
+# other isolation in compose.yaml remains active.
+services:
+  mcp:
+    security_opt: !reset []

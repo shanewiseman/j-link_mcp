@@ -1,0 +1,14 @@
+.git
+.venv
+.token
+.env
+.env.hardware
+.pytest_cache
+.coverage
+htmlcov
+state
+reports
+sbom/generated
+__pycache__
+*.pyc
+JLinkRemoteServer.log

@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jlink-mcp"
+version = "0.1.0"
+description = "Capability-aware MCP server for SEGGER J-Link debug probes"
+readme = "README.md"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "j-link_mcp contributors" }]
+dependencies = [
+  "httpx>=0.28,<1",
+  "mcp==1.27.2,<2",
+  "psutil>=6,<8",
+  "pydantic-settings>=2.5,<3",
+  "pyelftools>=0.32,<1",
+  "pygdbmi>=0.11,<1",
+  "pyserial>=3.5,<4",
+  "pyudev>=0.24,<1",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+test = [
+  "cyclonedx-bom>=5,<8",
+  "opencv-python-headless>=4.10,<5",
+  "pillow>=11,<13",
+  "pip-licenses>=5,<6",
+  "pytest>=8,<10",
+  "pytest-asyncio>=0.25,<2",
+  "pytest-cov>=6,<8",
+]
+gui = [
+  "opencv-python-headless>=4.10,<5",
+  "pillow>=11,<13",
+]
+
+[project.scripts]
+jlink-mcp = "jlink_mcp.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jlink_mcp"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+  "hardware: requires an attached J-Link and target",
+  "hil: exercises the MCP API against real target hardware",
+  "container: requires Docker",
+  "gui: requires Xvfb and installed SEGGER GUI tools",
+  "destructive: may change persistent target state",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["jlink_mcp"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80
