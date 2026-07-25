@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import json
@@ -15,10 +16,14 @@ from jlink_mcp.models import (
     ValidationReport,
 )
 from jlink_mcp.extensions.api import ExtensionRegistry
+from jlink_mcp.leases import ProbeBusy
 from jlink_mcp.service import JLinkService
 from jlink_mcp_arduino_giga.config import ArduinoGigaConfig
 from jlink_mcp_arduino_giga.profiles import GIGA_R1, TargetCore
-from jlink_mcp_arduino_giga.models import BuildResult
+from jlink_mcp_arduino_giga.models import (
+    BuildResult,
+    DeviceSelector as GigaDeviceSelector,
+)
 from jlink_mcp_arduino_giga.workflows import ArduinoGigaWorkflows
 import jlink_mcp_arduino_giga.workflows as workflow_module
 
@@ -40,6 +45,18 @@ def test_giga_bundle_resolves_omitted_profile_and_core(workflow) -> None:
     )
     assert resolved.target_profile == "arduino_giga_r1"
     assert resolved.core == "m7"
+    typed = GigaDeviceSelector(core=" m4 ")
+    assert typed.core is TargetCore.M4
+    assert typed.core.value == "m4"
+
+
+def test_packaged_fixture_paths_are_confined(workflow) -> None:
+    packaged = workflow._resolve_sketch_path("firmware/giga_hil/m7")
+    assert packaged.name == "m7"
+    with pytest.raises(ValueError, match="escapes fixture root"):
+        workflow._resolve_sketch_path(
+            "firmware/giga_hil/../../../../outside-packaged-fixtures"
+        )
 
 
 @pytest.mark.asyncio
@@ -317,13 +334,31 @@ async def test_preflight_deploy_and_boot_observation(workflow, manifest, monkeyp
     async def build(sketch, *, core, **kwargs):
         return fake_build(core)
 
+    deployment_lease_ids: list[str] = []
+
     async def flash(*args, **kwargs):
+        active = workflow.service.leases.active_leases()
+        assert len(active) == 1
+        assert active[0].owner == "giga_dual_core_deploy"
+        deployment_lease_ids.append(active[0].lease_id)
+
+        async def compete() -> None:
+            with pytest.raises(ProbeBusy):
+                async with workflow.service.leases.lease(
+                    PROBE, owner="competing_flash", timeout=0.001
+                ):
+                    pass
+
+        await asyncio.create_task(compete())
         return make_result()
 
     monkeypatch.setattr(workflow, "build_firmware", build)
     monkeypatch.setattr(workflow, "flash_binary", flash)
     deployed = await workflow.dual_core_deploy(selector=selector())
     assert deployed["ok"]
+    assert len(deployment_lease_ids) == 2
+    assert len(set(deployment_lease_ids)) == 1
+    assert workflow.service.leases.active_leases() == []
 
     serial_durations = []
 
@@ -547,7 +582,25 @@ async def test_validate_fixture_preflight_stop_and_guaranteed_restore(
     assert stopped.steps[0].name == "hardware_preflight"
     assert stopped.warnings
 
+    validation_lease_ids: list[str] = []
+
+    async def assert_validation_lease() -> None:
+        active = workflow.service.leases.active_leases()
+        assert len(active) == 1
+        assert active[0].owner == "giga_fixture_validation"
+        validation_lease_ids.append(active[0].lease_id)
+
+        async def compete() -> None:
+            with pytest.raises(ProbeBusy):
+                async with workflow.service.leases.lease(
+                    PROBE, owner="competing_validation", timeout=0.001
+                ):
+                    pass
+
+        await asyncio.create_task(compete())
+
     async def preflight(**kwargs):
+        await assert_validation_lease()
         return {"ok": True}
 
     backup_path = workflow.settings.state_root / "artifacts" / "original.bin"
@@ -559,6 +612,7 @@ async def test_validate_fixture_preflight_stop_and_guaranteed_restore(
     )
 
     async def backup_flash(*args, **kwargs):
+        await assert_validation_lease()
         return make_result(), backup
 
     def build_payload(core: str):
@@ -579,6 +633,7 @@ async def test_validate_fixture_preflight_stop_and_guaranteed_restore(
         }
 
     async def deploy(**kwargs):
+        await assert_validation_lease()
         return {
             "ok": True,
             "m4_build": build_payload("m4"),
@@ -589,6 +644,7 @@ async def test_validate_fixture_preflight_stop_and_guaranteed_restore(
         return {"ok": True}
 
     async def restore(*args, **kwargs):
+        await assert_validation_lease()
         return {"ok": True, "verify": "exact"}
 
     report_json = workflow.settings.state_root / "report.json"
@@ -616,6 +672,9 @@ async def test_validate_fixture_preflight_stop_and_guaranteed_restore(
     validated = await workflow.validate_fixture(selector=selector())
     assert validated.ok
     assert validated.restored_original
+    assert len(validation_lease_ids) == 4
+    assert len(set(validation_lease_ids)) == 1
+    assert workflow.service.leases.active_leases() == []
     assert [step.name for step in validated.steps] == [
         "hardware_preflight",
         "backup_original_flash",

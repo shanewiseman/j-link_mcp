@@ -189,7 +189,12 @@ class ArduinoGigaWorkflows(Workflows):
             relative = requested.relative_to(legacy_root)
         except ValueError:
             return self.settings.resolve_workspace_path(sketch)
-        packaged = Path(__file__).parent / "firmware" / "giga_hil" / relative
+        packaged_root = (
+            Path(__file__).parent / "firmware" / "giga_hil"
+        ).resolve(strict=True)
+        packaged = (packaged_root / relative).resolve()
+        if not packaged.is_relative_to(packaged_root):
+            raise ValueError("packaged sketch path escapes fixture root")
         return packaged.resolve(strict=True)
 
     async def _build_identity(self) -> dict[str, str]:
@@ -539,18 +544,24 @@ class ArduinoGigaWorkflows(Workflows):
         results: dict[str, CommandResult] = {}
         manifests: dict[str, dict[str, Any]] = {}
         identities: dict[str, dict[str, Any]] = {}
-        # Program the coprocessor first. Using the M7 access port is required
-        # for reliable dual-bank erase/program operations on STM32H747.
-        for core, build in (("m4", m4), ("m7", m7)):
-            build_manifest = self._build_manifest(build)
-            manifest = build_manifest["embedded_manifest"]
-            manifests[core] = manifest
-            identities[core] = build_manifest["identity"]
-            address = int(manifest["flash_start"], 0)
-            binary = self._build_artifact(build, "bin")
-            results[core] = await self.flash_binary(
-                binary.path, address, selector=access_selector
-            )
+        assert access_selector.probe_serial is not None
+        async with self.service.leases.lease(
+            access_selector.probe_serial,
+            owner="giga_dual_core_deploy",
+            timeout=self.settings.default_timeout_seconds,
+        ):
+            # Program the coprocessor first. Using the M7 access port is required
+            # for reliable dual-bank erase/program operations on STM32H747.
+            for core, build in (("m4", m4), ("m7", m7)):
+                build_manifest = self._build_manifest(build)
+                manifest = build_manifest["embedded_manifest"]
+                manifests[core] = manifest
+                identities[core] = build_manifest["identity"]
+                address = int(manifest["flash_start"], 0)
+                binary = self._build_artifact(build, "bin")
+                results[core] = await self.flash_binary(
+                    binary.path, address, selector=access_selector
+                )
         return {
             "ok": m4.command.ok
             and m7.command.ok
@@ -1285,6 +1296,25 @@ class ArduinoGigaWorkflows(Workflows):
         m4_sketch: str = "firmware/giga_hil/m4",
     ) -> ValidationReport:
         resolved = await self.service.resolve_selector_wait(selector)
+        assert resolved.probe_serial is not None
+        async with self.service.leases.lease(
+            resolved.probe_serial,
+            owner="giga_fixture_validation",
+            timeout=self.settings.default_timeout_seconds,
+        ):
+            return await self._validate_fixture_locked(
+                resolved=resolved,
+                m7_sketch=m7_sketch,
+                m4_sketch=m4_sketch,
+            )
+
+    async def _validate_fixture_locked(
+        self,
+        *,
+        resolved: DeviceSelector,
+        m7_sketch: str,
+        m4_sketch: str,
+    ) -> ValidationReport:
         report_selector = DeviceSelector.model_validate(
             resolved.model_dump(mode="python")
         )

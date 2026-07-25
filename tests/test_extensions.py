@@ -405,6 +405,67 @@ def test_failed_load_shuts_down_and_rolls_back_all_registrations() -> None:
     assert mcp.resources == {}
 
 
+@pytest.mark.parametrize("collision", ["capability", "dependency"])
+def test_contribution_validation_collisions_roll_back(collision: str) -> None:
+    events: list[str] = []
+    registry = ExtensionRegistry()
+
+    def register(context) -> None:
+        context.register_capability_provider(
+            lambda manifest: CapabilityContribution(
+                tools=(
+                    [
+                        ToolAvailability(
+                            name="core-capability",
+                            state=CapabilityState.AVAILABLE,
+                        )
+                    ]
+                    if collision == "capability"
+                    else []
+                )
+            )
+        )
+        context.register_dependency_provider(
+            lambda manifest: (
+                [DependencyCheck(name="core-dependency", ok=True)]
+                if collision == "dependency"
+                else []
+            )
+        )
+
+    loaded = manager(
+        [FakeExtension("colliding", events, register=register)],
+        registry=registry,
+    )
+
+    def validate() -> None:
+        manifest = registry.merge_capabilities(
+            CapabilityManifest(
+                host_os="test",
+                host_arch="test",
+                tools=[
+                    ToolAvailability(
+                        name="core-capability",
+                        state=CapabilityState.AVAILABLE,
+                    )
+                ],
+            )
+        )
+        registry.dependency_checks(
+            manifest,
+            existing_checks=[DependencyCheck(name="core-dependency", ok=True)],
+        )
+
+    with pytest.raises(ExtensionError, match="duplicate"):
+        loaded.load(validate=validate)
+
+    assert events == ["register:colliding:default", "shutdown:colliding"]
+    assert loaded.loaded_ids == []
+    assert registry.extension_infos == []
+    assert registry._capability_providers == []
+    assert registry._dependency_providers == []
+
+
 @pytest.mark.asyncio
 async def test_failed_load_rolls_back_inside_an_active_event_loop() -> None:
     events: list[str] = []

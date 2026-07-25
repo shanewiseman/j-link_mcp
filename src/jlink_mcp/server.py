@@ -139,7 +139,12 @@ class MCPRuntime:
             registry=self.registry,
             mcp=self.mcp,
         )
-        self.extensions.load()
+        self.extensions.load(validate=self._validate_extension_contributions)
+
+    def _validate_extension_contributions(self) -> None:
+        """Fail startup while extension registration can still be rolled back."""
+
+        self.service.doctor()
 
     @asynccontextmanager
     async def _lifespan(self, _: FastMCP[Any]):

@@ -8,7 +8,7 @@ import os
 import stat
 import threading
 import tomllib
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -56,7 +56,7 @@ class ExtensionManager:
     def loaded_ids(self) -> list[str]:
         return [extension.id for extension in self._loaded]
 
-    def load(self) -> None:
+    def load(self, *, validate: Callable[[], None] | None = None) -> None:
         if not self.enabled:
             return
         available = self._discover()
@@ -122,6 +122,13 @@ class ExtensionManager:
                         dependencies=list(extension.dependencies),
                     )
                 )
+            if validate is not None:
+                try:
+                    validate()
+                except Exception as exc:
+                    raise ExtensionError(
+                        f"extension contribution validation failed: {exc}"
+                    ) from exc
         except Exception as exc:
             cleanup_errors = self._shutdown_after_failed_load(started)
             for context in reversed(contexts):

@@ -63,10 +63,12 @@ class DeviceSelector(BaseModel):
             raise ValueError("serial identifiers must be non-empty alphanumerics")
         return value
 
-    @field_validator("target_profile", "core")
+    @field_validator("target_profile", "core", mode="before")
     @classmethod
-    def validate_identifier(cls, value: str | None) -> str | None:
+    def validate_identifier(cls, value: Any) -> Any:
         if value is None:
+            return value
+        if not isinstance(value, str):
             return value
         value = value.strip()
         if (
