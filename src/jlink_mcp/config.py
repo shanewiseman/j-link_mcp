@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 def _first_existing(*paths: str) -> Path:
@@ -30,6 +32,8 @@ class Settings(BaseSettings):
     mcp_path: str = "/mcp"
     token: str | None = None
     token_file: Path | None = None
+    extensions: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    extension_config: Path | None = None
 
     repository_root: Path = Field(default_factory=lambda: Path.cwd().resolve())
     workspace_root: Path = Field(default_factory=lambda: Path.cwd().resolve())
@@ -38,7 +42,6 @@ class Settings(BaseSettings):
         default_factory=lambda: _first_existing(
             "/opt/segger/JLink",
             "/opt/SEGGER/JLink",
-            "/home/swiseman/Documents/Arduino/JLink",
         )
     )
     ozone_root: Path | None = None
@@ -46,26 +49,14 @@ class Settings(BaseSettings):
     host_dev_root: Path = Path("/dev")
     sys_usb_root: Path = Path("/sys/bus/usb/devices")
 
-    arduino_cli: str = Field(
-        default_factory=lambda: shutil.which("arduino-cli")
-        or "/home/swiseman/.local/bin/arduino-cli"
+    gdb_client: str = Field(
+        default_factory=lambda: shutil.which("gdb-multiarch")
+        or shutil.which("gdb")
+        or shutil.which("arm-none-eabi-gdb")
+        or "gdb-multiarch"
     )
-    arduino_data_root: Path = Field(
-        default_factory=lambda: _first_existing(
-            "/opt/arduino/data",
-            str(Path.home() / ".arduino15"),
-        )
-    )
-    arm_gdb: str = Field(
-        default_factory=lambda: shutil.which("arm-none-eabi-gdb")
-        or "/home/swiseman/.arduino15/packages/arduino/tools/"
-        "arm-none-eabi-gcc/7-2017q4/bin/arm-none-eabi-gdb"
-    )
-    fqbn: str = "arduino:mbed_giga:giga"
-    flash_split: str = "75_25"
     default_timeout_seconds: float = Field(default=30.0, gt=0, le=3600)
     max_output_bytes: int = Field(default=4_000_000, ge=1024)
-    test_target_disposable: bool = False
     enable_gui: bool = True
     display: str = ":99"
 
@@ -78,14 +69,26 @@ class Settings(BaseSettings):
         "systemview_root",
         "host_dev_root",
         "sys_usb_root",
-        "arduino_data_root",
+        "extension_config",
         mode="before",
     )
     @classmethod
-    def expand_path(cls, value: str | Path) -> Path:
-        if value is None:
+    def expand_path(cls, value: str | Path | None) -> Path | None:
+        if value is None or value == "":
             return value
         return Path(value).expanduser()
+
+    @field_validator("extensions", mode="before")
+    @classmethod
+    def parse_extensions(cls, value: object) -> object:
+        if value is None or value == "":
+            return []
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.startswith("["):
+                return json.loads(stripped)
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
 
     def ensure_directories(self) -> None:
         self.state_root.mkdir(parents=True, exist_ok=True)

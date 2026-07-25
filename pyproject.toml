@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jlink-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Capability-aware MCP server for SEGGER J-Link debug probes"
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0"
@@ -43,6 +43,12 @@ jlink-mcp = "jlink_mcp.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jlink_mcp"]
+
+[tool.uv.workspace]
+members = [
+  "extensions/arduino_giga",
+  "extensions/giga_protocol_bridge",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers --strict-config"

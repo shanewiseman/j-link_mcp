@@ -1,4 +1,4 @@
-"""USB, serial, tool, and capability discovery."""
+"""Target-neutral USB, tool, probe, board, and capability discovery."""
 
 from __future__ import annotations
 
@@ -13,16 +13,14 @@ import pyudev
 
 from .config import Settings
 from .models import (
-    BoardCapabilities,
     CapabilityAvailability,
     CapabilityManifest,
     CapabilityState,
     ProbeCapabilities,
-    TargetCore,
     ToolAvailability,
     USBDevice,
 )
-from .profiles import GIGA_R1
+from .profiles import TargetRegistry
 
 SEGGER_TOOLS = (
     "DDConditionerExe",
@@ -70,7 +68,6 @@ def _device_nodes(device: pyudev.Device) -> list[str]:
 
 
 def _attribute(device: pyudev.Device, name: str) -> str | None:
-    """Read a sysfs USB attribute when the container has no udev database."""
     try:
         value = device.attributes.get(name)
     except (KeyError, OSError):
@@ -81,6 +78,8 @@ def _attribute(device: pyudev.Device, name: str) -> str | None:
 
 
 def discover_usb_devices() -> list[USBDevice]:
+    """Return USB identities for probe discovery and registered board detectors."""
+
     context = pyudev.Context()
     devices: list[USBDevice] = []
     for device in context.list_devices(subsystem="usb", DEVTYPE="usb_device"):
@@ -90,18 +89,14 @@ def discover_usb_devices() -> list[USBDevice]:
         product_id = _clean_hex(
             device.properties.get("ID_MODEL_ID") or _attribute(device, "idProduct")
         )
-        if vendor_id not in {"1366", "2341"}:
-            continue
-        kind = "jlink" if vendor_id == "1366" else "arduino"
-        serial = (
-            device.properties.get("ID_SERIAL_SHORT")
-            or _attribute(device, "serial")
+        serial = device.properties.get("ID_SERIAL_SHORT") or _attribute(
+            device, "serial"
         )
         if isinstance(serial, bytes):
             serial = serial.decode(errors="replace")
         devices.append(
             USBDevice(
-                kind=kind,
+                kind="jlink" if vendor_id == "1366" else "usb",
                 vendor_id=vendor_id,
                 product_id=product_id,
                 manufacturer=device.properties.get("ID_VENDOR_FROM_DATABASE")
@@ -120,7 +115,9 @@ def discover_usb_devices() -> list[USBDevice]:
     return devices
 
 
-def _serial_port(device: USBDevice, settings: Settings) -> str | None:
+def serial_port_for_usb(device: USBDevice, settings: Settings) -> str | None:
+    """Resolve a discovered USB serial node through the configured host view."""
+
     for node in device.device_nodes:
         if re.fullmatch(r"/dev/tty(?:ACM|USB)\d+", node):
             host_node = settings.host_dev_root / Path(node).relative_to("/dev")
@@ -136,61 +133,25 @@ def _serial_port(device: USBDevice, settings: Settings) -> str | None:
 
 def discover_tools(settings: Settings) -> list[ToolAvailability]:
     tools: list[ToolAvailability] = []
+    segger_version = _segger_version(settings.segger_root)
     for name in SEGGER_TOOLS:
         candidate = settings.segger_root / name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            tools.append(
-                ToolAvailability(
-                    name=name,
-                    state=CapabilityState.AVAILABLE,
-                    path=str(candidate.resolve()),
-                    version=_segger_version(settings.segger_root),
-                )
+        available = candidate.is_file() and os.access(candidate, os.X_OK)
+        tools.append(
+            ToolAvailability(
+                name=name,
+                state=(
+                    CapabilityState.AVAILABLE
+                    if available
+                    else CapabilityState.UNAVAILABLE
+                ),
+                path=str(candidate.resolve()) if available else None,
+                version=segger_version if available else None,
+                reason=None if available else f"not found below {settings.segger_root}",
             )
-        else:
-            tools.append(
-                ToolAvailability(
-                    name=name,
-                    state=CapabilityState.UNAVAILABLE,
-                    reason=f"not found below {settings.segger_root}",
-                )
-            )
+        )
     for name, configured in (
-        ("arduino-cli", settings.arduino_cli),
-        ("arm-none-eabi-gdb", settings.arm_gdb),
-        (
-            "arm-none-eabi-objcopy",
-            str(Path(settings.arm_gdb).parent / "arm-none-eabi-objcopy"),
-        ),
-        (
-            "arm-none-eabi-objdump",
-            str(Path(settings.arm_gdb).parent / "arm-none-eabi-objdump"),
-        ),
-        (
-            "arm-none-eabi-nm",
-            str(Path(settings.arm_gdb).parent / "arm-none-eabi-nm"),
-        ),
-        (
-            "openocd",
-            str(
-                settings.arduino_data_root
-                / "packages/arduino/tools/openocd/0.11.0-arduino2/bin/openocd"
-            ),
-        ),
-        (
-            "dfu-util",
-            str(
-                settings.arduino_data_root
-                / "packages/arduino/tools/dfu-util/0.10.0-arduino1/dfu-util"
-            ),
-        ),
-        (
-            "imgtool",
-            str(
-                settings.arduino_data_root
-                / "packages/arduino/tools/imgtool/1.8.0-arduino.2/imgtool"
-            ),
-        ),
+        ("gdb-client", settings.gdb_client),
         ("Xvfb", shutil.which("Xvfb")),
         ("xdotool", shutil.which("xdotool")),
         ("tesseract", shutil.which("tesseract")),
@@ -210,11 +171,7 @@ def discover_tools(settings: Settings) -> list[ToolAvailability]:
         tools.append(
             ToolAvailability(
                 name=name,
-                state=(
-                    CapabilityState.AVAILABLE
-                    if path
-                    else CapabilityState.UNAVAILABLE
-                ),
+                state=(CapabilityState.AVAILABLE if path else CapabilityState.UNAVAILABLE),
                 path=str(path) if path else None,
                 reason=None if path else "not installed or not in PATH",
             )
@@ -237,76 +194,44 @@ def _segger_version(root: Path) -> str | None:
     return None
 
 
-def capability_manifest(settings: Settings) -> CapabilityManifest:
-    usb_devices = discover_usb_devices()
+def capability_manifest(
+    settings: Settings, targets: TargetRegistry | None = None
+) -> CapabilityManifest:
+    targets = targets or TargetRegistry()
     probes: list[ProbeCapabilities] = []
-    boards: list[BoardCapabilities] = []
-    for usb in usb_devices:
+    boards = []
+    for usb in discover_usb_devices():
         if usb.kind == "jlink" and usb.serial:
-            model = "SEGGER J-Link"
-            if usb.product_id == "1020":
-                model = "SEGGER J-Link (EDU Mini V2 compatible USB identity)"
+            compact_probe = usb.product_id == "1020"
             probes.append(
                 ProbeCapabilities(
                     serial=usb.serial,
-                    model=model,
+                    model=(
+                        "SEGGER J-Link (EDU Mini V2 compatible USB identity)"
+                        if compact_probe
+                        else "SEGGER J-Link"
+                    ),
                     usb=usb,
                     interfaces=["SWD"],
-                    max_swd_speed_khz=4000 if usb.product_id == "1020" else None,
-                    max_swo_speed_khz=4000 if usb.product_id == "1020" else None,
-                    target_power=False if usb.product_id == "1020" else None,
+                    max_swd_speed_khz=4000 if compact_probe else None,
+                    max_swo_speed_khz=4000 if compact_probe else None,
+                    target_power=False if compact_probe else None,
                     trace=["SWO", "RTT"],
                 )
             )
-        elif (
-            usb.kind == "arduino"
-            and usb.vendor_id == GIGA_R1.usb_vid
-            and usb.product_id in GIGA_R1.usb_pids
-        ):
-            boards.append(
-                BoardCapabilities(
-                    serial=usb.serial,
-                    model=GIGA_R1.display_name,
-                    fqbn=GIGA_R1.fqbn,
-                    mcu=GIGA_R1.mcu,
-                    cores=[TargetCore.M7, TargetCore.M4],
-                    usb=usb,
-                    serial_port=_serial_port(usb, settings),
-                )
-            )
+            continue
+        if board := targets.detect_board(usb):
+            boards.append(board)
 
-    unique_pair = len(probes) == 1 and len(boards) == 1
-    limitations = [
-        "Probe capabilities are dynamically constrained by model, firmware, and licenses.",
-        "Board identity inferred over USB must be confirmed by target MCU identity before writes.",
-        "Direct J-Link SDK calls are unavailable until a licensed SDK is mounted.",
-    ]
-    if probes and probes[0].usb.product_id == "1020":
-        limitations.append(
-            "EDU Mini use is restricted to qualifying non-profit educational work."
-        )
     tools = discover_tools(settings)
     available = {tool.name for tool in tools if tool.state == CapabilityState.AVAILABLE}
     workflows = {
         "preflight": CapabilityState.AVAILABLE,
-        "build_firmware": (
-            CapabilityState.AVAILABLE
-            if "arduino-cli" in available
-            else CapabilityState.UNAVAILABLE
-        ),
-        "flash_verify": (
-            CapabilityState.AVAILABLE
-            if "JLinkExe" in available
-            else CapabilityState.UNAVAILABLE
-        ),
-        "debug": (
-            CapabilityState.AVAILABLE
-            if {"JLinkGDBServerCLExe", "arm-none-eabi-gdb"} <= available
-            else CapabilityState.UNAVAILABLE
-        ),
+        "flash_verify": _tool_state(available, "JLinkExe"),
+        "debug": _tools_state(available, {"JLinkGDBServerCLExe", "gdb-client"}),
         "gui": (
-            CapabilityState.AVAILABLE
-            if settings.enable_gui and {"Xvfb", "xdotool"} <= available
+            _tools_state(available, {"Xvfb", "xdotool"})
+            if settings.enable_gui
             else CapabilityState.UNAVAILABLE
         ),
         "sdk": CapabilityState.UNAVAILABLE,
@@ -315,61 +240,17 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
             if any(board.serial_port for board in boards)
             else CapabilityState.UNAVAILABLE
         ),
-        "rtt": (
-            CapabilityState.AVAILABLE
-            if "JLinkRTTLoggerExe" in available
-            else CapabilityState.UNAVAILABLE
-        ),
+        "rtt": _tool_state(available, "JLinkRTTLoggerExe"),
         "swo_itm": (
             CapabilityState.AVAILABLE
-            if probes and probes[0].max_swo_speed_khz
+            if any(probe.max_swo_speed_khz for probe in probes)
             else CapabilityState.UNAVAILABLE
         ),
-        "dual_core_deploy": (
-            CapabilityState.AVAILABLE
-            if "JLinkExe" in available and "arduino-cli" in available
-            else CapabilityState.UNAVAILABLE
-        ),
-        "backup_restore": (
-            CapabilityState.AVAILABLE
-            if "JLinkExe" in available
-            else CapabilityState.UNAVAILABLE
-        ),
+        "backup_restore": _tool_state(available, "JLinkExe"),
+        "firmware_comparison": _tool_state(available, "JLinkExe"),
+        "rtt_capture": _tool_state(available, "JLinkRTTLoggerExe"),
+        "validation_report": CapabilityState.AVAILABLE,
     }
-    workflows.update(
-        {
-            "hardware_preflight": workflows["flash_verify"],
-            "dual_core_debug_prepare": workflows["flash_verify"],
-            "boot_and_observe": (
-                CapabilityState.AVAILABLE
-                if workflows["flash_verify"] == CapabilityState.AVAILABLE
-                and workflows["serial"] == CapabilityState.AVAILABLE
-                else CapabilityState.UNAVAILABLE
-            ),
-            "debug_fixture": (
-                CapabilityState.AVAILABLE
-                if workflows["debug"] == CapabilityState.AVAILABLE
-                and workflows["serial"] == CapabilityState.AVAILABLE
-                else CapabilityState.UNAVAILABLE
-            ),
-            "crash_capture": (
-                CapabilityState.AVAILABLE
-                if workflows["debug"] == CapabilityState.AVAILABLE
-                and workflows["serial"] == CapabilityState.AVAILABLE
-                else CapabilityState.UNAVAILABLE
-            ),
-            "firmware_comparison": workflows["flash_verify"],
-            "rtt_capture": workflows["rtt"],
-            "regression_execution": (
-                CapabilityState.AVAILABLE
-                if workflows["dual_core_deploy"] == CapabilityState.AVAILABLE
-                and workflows["debug"] == CapabilityState.AVAILABLE
-                and workflows["serial"] == CapabilityState.AVAILABLE
-                else CapabilityState.UNAVAILABLE
-            ),
-            "validation_report": CapabilityState.AVAILABLE,
-        }
-    )
 
     def detail(
         name: str, dependencies: list[str], unavailable_reason: str
@@ -381,6 +262,16 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
             reason=None if state == CapabilityState.AVAILABLE else unavailable_reason,
         )
 
+    unique_pair = len(probes) == 1 and len(boards) == 1
+    limitations = [
+        "Probe capabilities are dynamically constrained by model, firmware, and licenses.",
+        "Board identity inferred over USB must be confirmed by a registered target profile before writes.",
+        "Direct J-Link SDK calls are unavailable until a licensed SDK is mounted.",
+    ]
+    if probes and probes[0].usb.product_id == "1020":
+        limitations.append(
+            "EDU Mini use is restricted to qualifying non-profit educational work."
+        )
     return CapabilityManifest(
         host_os=platform.system(),
         host_arch=platform.machine(),
@@ -390,19 +281,17 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
         workflows=workflows,
         workflow_details={
             "preflight": detail("preflight", [], "internal workflow unavailable"),
-            "build_firmware": detail(
-                "build_firmware", ["arduino-cli"], "Arduino CLI is not installed"
-            ),
             "flash_verify": detail(
                 "flash_verify", ["JLinkExe"], "J-Link Commander is not installed"
             ),
             "debug": detail(
                 "debug",
-                ["JLinkGDBServerCLExe", "arm-none-eabi-gdb"],
-                "J-Link GDB Server and Arm GDB are both required",
+                ["JLinkGDBServerCLExe", "gdb-client"],
+                "J-Link GDB Server and a configured GDB client are required",
             ),
             "gui": detail(
-                "gui", ["Xvfb", "xdotool"],
+                "gui",
+                ["Xvfb", "xdotool"],
                 "GUI is disabled or Xvfb/xdotool is missing",
             ),
             "sdk": CapabilityAvailability(
@@ -411,61 +300,28 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
                 reason="No separately licensed J-Link SDK package is mounted",
             ),
             "serial": detail(
-                "serial", ["GIGA USB CDC"], "No accessible GIGA serial node was discovered"
+                "serial",
+                ["registered board serial channel"],
+                "No registered board with an accessible serial node was discovered",
             ),
             "rtt": detail(
                 "rtt", ["JLinkRTTLoggerExe"], "J-Link RTT Logger is not installed"
             ),
             "swo_itm": detail(
-                "swo_itm", ["probe SWO support", "SWO wire"],
-                "The selected probe does not report SWO support",
-            ),
-            "dual_core_deploy": detail(
-                "dual_core_deploy", ["JLinkExe", "arduino-cli"],
-                "Commander and Arduino CLI are both required",
+                "swo_itm",
+                ["probe SWO support", "SWO wire"],
+                "No discovered probe reports SWO support",
             ),
             "backup_restore": detail(
                 "backup_restore", ["JLinkExe"], "J-Link Commander is not installed"
             ),
-            "hardware_preflight": detail(
-                "hardware_preflight",
-                ["JLinkExe", "live M7/M4 access"],
-                "J-Link Commander or live target access is unavailable",
-            ),
-            "dual_core_debug_prepare": detail(
-                "dual_core_debug_prepare",
-                ["JLinkExe", "live M7 access"],
-                "J-Link Commander or live M7 access is unavailable",
-            ),
-            "boot_and_observe": detail(
-                "boot_and_observe",
-                ["JLinkExe", "GIGA USB CDC"],
-                "Commander and an accessible GIGA serial channel are required",
-            ),
-            "debug_fixture": detail(
-                "debug_fixture",
-                ["JLinkGDBServerCLExe", "arm-none-eabi-gdb", "GIGA USB CDC"],
-                "Managed GDB and GIGA serial are both required",
-            ),
-            "crash_capture": detail(
-                "crash_capture",
-                ["JLinkGDBServerCLExe", "arm-none-eabi-gdb", "GIGA USB CDC"],
-                "Managed GDB and the fixture fault trigger are required",
-            ),
             "firmware_comparison": detail(
-                "firmware_comparison",
-                ["JLinkExe"],
-                "J-Link Commander is not installed",
+                "firmware_comparison", ["JLinkExe"], "J-Link Commander is not installed"
             ),
             "rtt_capture": detail(
                 "rtt_capture",
-                ["JLinkRTTLoggerExe", "ELF _SEGGER_RTT symbol"],
+                ["JLinkRTTLoggerExe", "ELF RTT symbol"],
                 "RTT Logger or a concrete control-block symbol is unavailable",
-            ),
-            "regression_execution": detail(
-                "regression_execution",
-                ["Arduino CLI", "Commander", "managed GDB", "GIGA USB CDC"],
-                "The complete build, flash, debug, and observation stack is required",
             ),
             "validation_report": detail(
                 "validation_report", ["persistent state"], "Persistent state is unavailable"
@@ -473,12 +329,20 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
         },
         features={
             "target_power": CapabilityAvailability(
-                state=CapabilityState.UNAVAILABLE,
-                reason="J-Link EDU Mini V2 cannot supply target power",
+                state=(
+                    CapabilityState.AVAILABLE
+                    if any(probe.target_power for probe in probes)
+                    else CapabilityState.UNAVAILABLE
+                ),
+                reason=(
+                    None
+                    if any(probe.target_power for probe in probes)
+                    else "No discovered probe reports target-power support"
+                ),
             ),
             "etm_trace": CapabilityAvailability(
-                state=CapabilityState.UNAVAILABLE,
-                reason="J-Link EDU Mini V2 has no high-speed trace capture interface",
+                state=CapabilityState.UNKNOWN,
+                reason="Trace capability depends on the selected probe and target wiring",
             ),
             "swo_wire": CapabilityAvailability(
                 state=CapabilityState.UNKNOWN,
@@ -486,19 +350,19 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
                 reason="SWO wiring cannot be inferred from USB discovery; validate by capture",
             ),
             "ozone": CapabilityAvailability(
-                state=(CapabilityState.AVAILABLE if "Ozone" in available else CapabilityState.UNAVAILABLE),
+                state=_tool_state(available, "Ozone"),
                 reason=None if "Ozone" in available else "Optional Ozone package is not mounted",
             ),
             "systemview": CapabilityAvailability(
-                state=(CapabilityState.AVAILABLE if "SystemView" in available else CapabilityState.UNAVAILABLE),
-                reason=None if "SystemView" in available else "Optional SystemView package is not mounted",
+                state=_tool_state(available, "SystemView"),
+                reason=(
+                    None
+                    if "SystemView" in available
+                    else "Optional SystemView package is not mounted"
+                ),
             ),
             "semihosting": CapabilityAvailability(
-                state=(
-                    CapabilityState.AVAILABLE
-                    if workflows["debug"] == CapabilityState.AVAILABLE
-                    else CapabilityState.UNAVAILABLE
-                ),
+                state=workflows["debug"],
                 dependencies=["J-Link GDB Server telnet channel"],
                 reason=(
                     None
@@ -523,22 +387,64 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
             "allowlisted SEGGER application arguments",
         ],
         atomic_tools=[
-            "list_jlink_probes", "connect_target", "disconnect_target",
-            "get_probe_information", "reset_target", "halt_target", "run_target",
-            "step_target", "read_memory", "write_memory", "read_register",
-            "write_register", "set_breakpoint", "clear_breakpoint",
-            "set_watchpoint", "clear_watchpoint", "erase_flash", "verify_binary",
-            "serial_exchange", "capture_serial", "swo_control", "start_gdb_session",
-            "gdb_command", "capture_gdb_channel", "exchange_gdb_channel",
-            "stop_gdb_session", "inspect_elf", "run_segger_application",
-            "launch_segger_gui", "gui_session_info", "gui_keys", "gui_click",
-            "gui_screenshot", "gui_ocr", "gui_accessibility_tree",
-            "gui_image_match", "stop_segger_gui",
+            "list_jlink_probes",
+            "connect_target",
+            "disconnect_target",
+            "get_probe_information",
+            "reset_target",
+            "halt_target",
+            "run_target",
+            "step_target",
+            "read_memory",
+            "write_memory",
+            "read_register",
+            "write_register",
+            "set_breakpoint",
+            "clear_breakpoint",
+            "set_watchpoint",
+            "clear_watchpoint",
+            "erase_flash",
+            "verify_binary",
+            "serial_exchange",
+            "capture_serial",
+            "swo_control",
+            "start_gdb_session",
+            "gdb_command",
+            "capture_gdb_channel",
+            "exchange_gdb_channel",
+            "stop_gdb_session",
+            "inspect_elf",
+            "run_segger_application",
+            "launch_segger_gui",
+            "gui_session_info",
+            "gui_keys",
+            "gui_click",
+            "gui_screenshot",
+            "gui_ocr",
+            "gui_accessibility_tree",
+            "gui_image_match",
+            "stop_segger_gui",
         ],
         limitations=limitations,
         unique_pair=unique_pair,
         selected_probe_serial=probes[0].serial if unique_pair else None,
         selected_board_serial=boards[0].serial if unique_pair else None,
+    )
+
+
+def _tool_state(available: set[str], name: str) -> CapabilityState:
+    return (
+        CapabilityState.AVAILABLE
+        if name in available
+        else CapabilityState.UNAVAILABLE
+    )
+
+
+def _tools_state(available: set[str], names: set[str]) -> CapabilityState:
+    return (
+        CapabilityState.AVAILABLE
+        if names <= available
+        else CapabilityState.UNAVAILABLE
     )
 
 

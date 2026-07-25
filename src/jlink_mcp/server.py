@@ -11,13 +11,16 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from .config import Settings
+from .extensions.api import (
+    ArtifactService,
+    ExtensionRegistry,
+    ExtensionServices,
+)
+from .extensions.loader import ExtensionManager
 from .models import (
-    BuildResult,
     CommandResult,
     DependencyReport,
     DeviceSelector,
-    TargetCore,
-    ValidationReport,
 )
 from .service import JLinkService
 from .workflows import Workflows
@@ -35,11 +38,74 @@ MUTATING = ToolAnnotations(
     openWorldHint=False,
 )
 
+CORE_RESOURCE_URIS = {
+    "jlink://capabilities",
+    "jlink://audit/recent",
+    "jlink://sessions",
+}
+CORE_TOOL_NAMES = {
+    "get_capabilities",
+    "dependency_doctor",
+    "list_jlink_probes",
+    "connect_target",
+    "disconnect_target",
+    "get_probe_information",
+    "reset_target",
+    "halt_target",
+    "run_target",
+    "step_target",
+    "read_memory",
+    "write_memory",
+    "read_register",
+    "write_register",
+    "set_breakpoint",
+    "clear_breakpoint",
+    "set_watchpoint",
+    "clear_watchpoint",
+    "erase_flash",
+    "verify_binary",
+    "raw_commander",
+    "raw_jlink_command_string",
+    "run_segger_application",
+    "serial_exchange",
+    "capture_serial",
+    "swo_control",
+    "start_gdb_session",
+    "gdb_command",
+    "capture_gdb_channel",
+    "exchange_gdb_channel",
+    "stop_gdb_session",
+    "inspect_elf",
+    "flash_and_verify",
+    "flash_binary",
+    "backup_flash",
+    "compare_firmware",
+    "compare_backup_region",
+    "capture_rtt",
+    "restore_flash_backup",
+    "generate_validation_report",
+    "launch_segger_gui",
+    "gui_keys",
+    "gui_click",
+    "gui_screenshot",
+    "gui_ocr",
+    "gui_accessibility_tree",
+    "gui_session_info",
+    "gui_image_match",
+    "stop_segger_gui",
+    "recent_audit_operations",
+    "verify_audit_chain",
+}
+
 
 class MCPRuntime:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or Settings()
-        self.service = JLinkService(self.settings)
+        self.registry = ExtensionRegistry(
+            tool_names=set(CORE_TOOL_NAMES),
+            resource_uris=set(CORE_RESOURCE_URIS),
+        )
+        self.service = JLinkService(self.settings, self.registry)
         self.workflows = Workflows(self.service)
         self.mcp = FastMCP(
             "jlink-mcp",
@@ -58,13 +124,37 @@ class MCPRuntime:
         )
         self._register_resources()
         self._register_tools()
+        services = ExtensionServices(
+            jlink=self.service,
+            serial=self.service.serial,
+            artifacts=ArtifactService(self.settings, self.service.store),
+            audit=self.service.store,
+            paths=self.settings,
+            process=self.service.runner,
+        )
+        self.extensions = ExtensionManager(
+            enabled=self.settings.extensions,
+            config_path=self.settings.extension_config,
+            services=services,
+            registry=self.registry,
+            mcp=self.mcp,
+        )
+        self.extensions.load(validate=self._validate_extension_contributions)
+
+    def _validate_extension_contributions(self) -> None:
+        """Fail startup while extension registration can still be rolled back."""
+
+        self.service.doctor()
 
     @asynccontextmanager
     async def _lifespan(self, _: FastMCP[Any]):
         try:
             yield {"service": self.service, "workflows": self.workflows}
         finally:
-            await self.service.close()
+            try:
+                await self.extensions.shutdown()
+            finally:
+                await self.service.close()
 
     def _register_resources(self) -> None:
         @self.mcp.resource(
@@ -409,18 +499,6 @@ class MCPRuntime:
             """Inspect ELF segments, entry point, and jlink_mcp_* symbols."""
             return service.inspect_elf(elf_path)
 
-        @mcp.tool(annotations=READ_ONLY)
-        async def build_giga_firmware(
-            sketch_path: str,
-            core: TargetCore,
-            flash_split: str = "75_25",
-            clean: bool = True,
-        ) -> BuildResult:
-            """Compile a GIGA M7 or M4 sketch and register all artifacts."""
-            return await workflows.build_firmware(
-                sketch_path, core=core, flash_split=flash_split, clean=clean
-            )
-
         @mcp.tool(annotations=MUTATING)
         async def flash_and_verify(
             artifact_path: str, selector: DeviceSelector | None = None
@@ -455,78 +533,6 @@ class MCPRuntime:
                 "command": result.model_dump(mode="json"),
                 "artifact": artifact.model_dump(mode="json") if artifact else None,
             }
-
-        @mcp.tool(annotations=MUTATING)
-        async def validate_giga_fixture(
-            selector: DeviceSelector | None = None,
-            m7_sketch: str = "firmware/giga_hil/m7",
-            m4_sketch: str = "firmware/giga_hil/m4",
-        ) -> ValidationReport:
-            """Run the MCP-owned GIGA fixture build/flash validation workflow."""
-            return await workflows.validate_fixture(
-                selector=selector, m7_sketch=m7_sketch, m4_sketch=m4_sketch
-            )
-
-        @mcp.tool(annotations=MUTATING)
-        async def hardware_preflight(
-            selector: DeviceSelector | None = None,
-            prepare_dual_core: bool = False,
-        ) -> dict[str, Any]:
-            """Identify both cores and snapshot state, optionally releasing held M4."""
-            return await workflows.hardware_preflight(
-                selector=selector, prepare_dual_core=prepare_dual_core
-            )
-
-        @mcp.tool(annotations=MUTATING)
-        async def prepare_giga_dual_core_debug(
-            selector: DeviceSelector | None = None,
-        ) -> dict[str, Any]:
-            """Transiently release an option-held GIGA M4 and verify both cores."""
-            return await workflows.prepare_giga_dual_core_debug(selector=selector)
-
-        @mcp.tool(annotations=MUTATING)
-        async def deploy_dual_core_firmware(
-            selector: DeviceSelector | None = None,
-            m7_sketch: str = "firmware/giga_hil/m7",
-            m4_sketch: str = "firmware/giga_hil/m4",
-            flash_split: str = "75_25",
-        ) -> dict[str, Any]:
-            """Build, flash, verify, reset, and run both GIGA cores."""
-            return await workflows.dual_core_deploy(
-                selector=selector,
-                m7_sketch=m7_sketch,
-                m4_sketch=m4_sketch,
-                flash_split=flash_split,
-            )
-
-        @mcp.tool(annotations=MUTATING)
-        async def boot_and_observe(
-            selector: DeviceSelector | None = None,
-            m7_elf_path: str | None = None,
-            m4_elf_path: str | None = None,
-        ) -> dict[str, Any]:
-            """Reset/run both cores and validate manifests, heartbeat, self-test, and RPC."""
-            return await workflows.boot_and_observe(
-                selector=selector,
-                m7_elf_path=m7_elf_path,
-                m4_elf_path=m4_elf_path,
-            )
-
-        @mcp.tool(annotations=MUTATING)
-        async def assert_debug_fixture(
-            elf_path: str,
-            selector: DeviceSelector | None = None,
-        ) -> dict[str, Any]:
-            """Assert symbolic breakpoint/watchpoint, registers, stack, memory, and step."""
-            return await workflows.debug_fixture(elf_path, selector=selector)
-
-        @mcp.tool(annotations=MUTATING)
-        async def capture_controlled_crash(
-            elf_path: str,
-            selector: DeviceSelector | None = None,
-        ) -> dict[str, Any]:
-            """Trigger, capture, analyze, and recover a fixture HardFault."""
-            return await workflows.crash_capture(elf_path, selector=selector)
 
         @mcp.tool(annotations=READ_ONLY)
         async def compare_firmware(

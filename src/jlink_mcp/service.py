@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import os
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +23,7 @@ from .backends import (
 from .config import Settings
 from .discovery import capability_manifest
 from .doctor import dependency_report
+from .extensions.api import ExtensionRegistry
 from .leases import ProbeLeaseManager
 from .models import (
     CapabilityManifest,
@@ -30,7 +31,6 @@ from .models import (
     DependencyCheck,
     DependencyReport,
     DeviceSelector,
-    TargetCore,
 )
 from .runner import ProcessRunner
 from .store import AuditStore
@@ -39,11 +39,6 @@ from .store import AuditStore
 class TargetSelectionError(RuntimeError):
     pass
 
-
-_EXPECTED_TARGETS = {
-    TargetCore.M7: {"core": "Cortex-M7", "cpuid": "0x411FC271"},
-    TargetCore.M4: {"core": "Cortex-M4", "cpuid": "0x410FC241"},
-}
 
 _READ_ONLY_COMMANDER_COMMANDS = {
     "mem",
@@ -74,15 +69,20 @@ _INFORMATIONAL_APPLICATION_ARGUMENTS = {
 
 
 class JLinkService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, registry: ExtensionRegistry | None = None
+    ) -> None:
         self.settings = settings
+        self.extensions = registry or ExtensionRegistry()
         self.settings.ensure_directories()
         self.runner = ProcessRunner(max_output_bytes=settings.max_output_bytes)
         self.store = AuditStore(settings.state_root / "jlink-mcp.sqlite3")
         stale_sessions = self.store.clear_stale_sessions()
         self.leases = ProbeLeaseManager()
-        self.commander = CommanderBackend(settings, self.runner)
-        self.gdb = GDBBackend(settings, self.runner)
+        self.commander = CommanderBackend(
+            settings, self.runner, self.extensions.targets
+        )
+        self.gdb = GDBBackend(settings, self.runner, self.extensions.targets)
         self.gui = GUIBackend(settings, self.runner)
         self.application = ApplicationBackend(settings, self.runner)
         self.serial = SerialBackend()
@@ -112,7 +112,7 @@ class JLinkService:
             )
 
     def capabilities(self) -> CapabilityManifest:
-        manifest = capability_manifest(self.settings)
+        manifest = capability_manifest(self.settings, self.extensions.targets)
         # USB discovery cannot report probe firmware or licensed features.
         # Enrich it from the newest hash-chained positive identity observation.
         observations: dict[str, dict[str, Any]] = {}
@@ -138,74 +138,90 @@ class JLinkService:
                 probe.model = (
                     observation.get("hardware_version") and probe.model
                 ) or probe.model
-        return manifest
+        return self.extensions.merge_capabilities(manifest)
 
     def doctor(self) -> DependencyReport:
-        report = dependency_report(self.settings)
-        identities: dict[str, dict[str, Any]] = {}
+        report = dependency_report(self.settings, self.extensions.targets)
+        report.manifest = self.capabilities()
         probe_evidence: dict[str, Any] = {}
         for entry in self.store.list_operations(limit=1000):
             result = entry["payload"].get("result", {})
-            target = result.get("target_identity", {})
-            core = target.get("core")
-            if core and core not in identities and target.get("cpuid"):
-                identities[str(core)] = target
             probe = result.get("probe_identity", {})
-            if probe.get("licenses") and not probe_evidence.get("licenses"):
+            if (
+                probe.get("licenses")
+                and not probe_evidence.get("licenses")
+                or not probe_evidence
+                and probe.get("serial")
+            ):
                 probe_evidence = probe
-            elif not probe_evidence and probe.get("serial"):
-                probe_evidence = probe
-        for core, expected in (("m7", "0x411FC271"), ("m4", "0x410FC241")):
-            identity = identities.get(core, {})
-            report.checks.append(
-                DependencyCheck(
-                    name=f"target-{core}-identity",
-                    ok=str(identity.get("cpuid", "")).upper() == expected.upper(),
-                    observed=str(identity or "no positive identity observation"),
-                    expected=f"STM32H747 {core.upper()} CPUID {expected}",
-                    remediation="Run hardware_preflight with the stable probe/board selector.",
-                )
-            )
-        voltages = [
-            value.get("target_voltage")
-            for value in identities.values()
-            if isinstance(value.get("target_voltage"), (int, float))
+        runtime_checks = [
+            DependencyCheck(
+                name="probe-licenses",
+                ok=bool(probe_evidence.get("licenses")),
+                observed=str(probe_evidence.get("licenses") or "not observed"),
+                expected="live license list from J-Link Commander",
+                remediation="Run get_probe_information for the selected probe.",
+            ),
+            DependencyCheck(
+                name="container-non-root",
+                ok=os.geteuid() != 0,
+                observed=f"uid={os.geteuid()}",
+                expected="non-root service user",
+            ),
+            DependencyCheck(
+                name="container-capabilities-dropped",
+                ok=_effective_capabilities() == 0,
+                observed=f"CapEff=0x{_effective_capabilities():x}",
+                expected="CapEff=0",
+            ),
         ]
-        report.checks.extend(
-            [
-                DependencyCheck(
-                    name="target-voltage",
-                    ok=bool(voltages) and min(voltages) >= 1.0,
-                    observed=str(voltages or "not observed"),
-                    expected="VTref >= 1.0 V from positively identified target",
-                    remediation="Power the GIGA separately and connect VTref/GND.",
-                ),
-                DependencyCheck(
-                    name="probe-licenses",
-                    ok=bool(probe_evidence.get("licenses")),
-                    observed=str(probe_evidence.get("licenses") or "not observed"),
-                    expected="live license list from J-Link Commander",
-                    remediation="Run hardware_preflight or get_probe_information.",
-                ),
-                DependencyCheck(
-                    name="container-non-root",
-                    ok=os.geteuid() != 0,
-                    observed=f"uid={os.geteuid()}",
-                    expected="non-root service user",
-                ),
-                DependencyCheck(
-                    name="container-capabilities-dropped",
-                    ok=_effective_capabilities() == 0,
-                    observed=f"CapEff=0x{_effective_capabilities():x}",
-                    expected="CapEff=0",
-                ),
-            ]
+        extension_checks = self.extensions.dependency_checks(
+            report.manifest,
+            existing_checks=[*report.checks, *runtime_checks],
         )
+        report.checks.extend(extension_checks)
+        report.checks.extend(runtime_checks)
         return report
 
     def resolve_selector(self, selector: DeviceSelector | None) -> DeviceSelector:
         manifest = self.capabilities()
         selector = selector or DeviceSelector()
+        profiles = self.extensions.targets.profiles
+        if not profiles:
+            raise TargetSelectionError(
+                "no target profile is registered; enable an extension that "
+                "provides the selected target"
+            )
+
+        profile_id = selector.target_profile
+        if profile_id is None:
+            matching_profile_ids = {
+                board.target_profile
+                for board in manifest.boards
+                if board.target_profile
+                and (
+                    selector.board_serial is None
+                    or board.serial == selector.board_serial
+                )
+            }
+            if len(matching_profile_ids) == 1:
+                profile_id = matching_profile_ids.pop()
+            elif len(profiles) == 1:
+                profile_id = next(iter(profiles))
+            else:
+                raise TargetSelectionError(
+                    "target profile selection is ambiguous; provide target_profile"
+                )
+        try:
+            profile = self.extensions.targets.get_profile(profile_id)
+        except ValueError as exc:
+            raise TargetSelectionError(str(exc)) from exc
+        core = selector.core or profile.default_core
+        if core not in profile.cores:
+            raise TargetSelectionError(
+                f"unknown core {core!r} for target profile {profile_id}"
+            )
+
         probe_serial = selector.probe_serial
         board_serial = selector.board_serial
 
@@ -218,10 +234,13 @@ class JLinkService:
         if probe_serial not in {probe.serial for probe in manifest.probes}:
             raise TargetSelectionError(f"J-Link serial is not attached: {probe_serial}")
 
-        if board_serial is None and len(manifest.boards) == 1:
-            board_serial = manifest.boards[0].serial
+        applicable_boards = [
+            board for board in manifest.boards if board.target_profile == profile_id
+        ]
+        if board_serial is None and len(applicable_boards) == 1:
+            board_serial = applicable_boards[0].serial
         elif board_serial and board_serial not in {
-            board.serial for board in manifest.boards
+            board.serial for board in applicable_boards
         }:
             if manifest.boards or not self.store.has_verified_target(
                 board_serial, probe_serial
@@ -229,14 +248,22 @@ class JLinkService:
                 raise TargetSelectionError(
                     f"board serial is not attached or audit-verified: {board_serial}"
                 )
-        elif len(manifest.boards) > 1 and board_serial is None:
+        elif len(applicable_boards) > 1 and board_serial is None:
             raise TargetSelectionError(
                 "board selection is ambiguous; provide board_serial"
             )
 
-        return selector.model_copy(
-            update={"probe_serial": probe_serial, "board_serial": board_serial}
-        )
+        updates = {
+            "probe_serial": probe_serial,
+            "board_serial": board_serial,
+            "target_profile": profile_id,
+            "core": core,
+        }
+        if "interface" not in selector.model_fields_set:
+            updates["interface"] = profile.default_interface
+        if "speed_khz" not in selector.model_fields_set:
+            updates["speed_khz"] = profile.default_speed_khz
+        return selector.model_copy(update=updates)
 
     async def resolve_selector_wait(
         self,
@@ -276,9 +303,7 @@ class JLinkService:
                     commands, selector=resolved, timeout=timeout
                 )
                 result.session_id = lease.lease_id
-                result.parsed.setdefault(
-                    "selector", resolved.model_dump(mode="json")
-                )
+                result.parsed.setdefault("selector", resolved.model_dump(mode="json"))
                 self._attach_identities(result, resolved, result.parsed)
                 self.store.append_operation(
                     result=result,
@@ -343,39 +368,43 @@ class JLinkService:
     def _validate_identity(
         self, result: CommandResult, selector: DeviceSelector
     ) -> None:
-        expected = _EXPECTED_TARGETS[selector.core]
+        if selector.target_profile is None or selector.core is None:
+            raise TargetSelectionError("target profile and core were not resolved")
+        profile = self.extensions.targets.get_profile(selector.target_profile)
+        expected = profile.cores[selector.core]
         parsed = result.parsed
         failures: list[str] = []
         if not result.ok or not parsed.get("connected"):
             failures.append("target did not connect")
-        if parsed.get("core") != expected["core"]:
+        if parsed.get("core") != expected.expected_core:
             failures.append(
-                f"core {parsed.get('core')!r} != {expected['core']!r}"
+                f"core {parsed.get('core')!r} != {expected.expected_core!r}"
             )
         try:
             cpuid = int(str(parsed.get("cpuid", "")), 0)
         except ValueError:
             cpuid = -1
-        if cpuid != int(expected["cpuid"], 0):
+        if cpuid != expected.expected_cpuid:
             failures.append(
-                f"CPUID {parsed.get('cpuid')!r} != {expected['cpuid']}"
+                f"CPUID {parsed.get('cpuid')!r} != 0x{expected.expected_cpuid:08X}"
             )
         try:
             dpidr = int(str(parsed.get("dpidr", "")), 0)
         except ValueError:
             dpidr = -1
-        if dpidr != 0x6BA02477:
+        if dpidr != profile.expected_dpidr:
             failures.append(f"unexpected SW-DP ID {parsed.get('dpidr')!r}")
         voltage = parsed.get("target_voltage")
-        if not isinstance(voltage, (int, float)) or voltage < 1.0:
+        if (
+            not isinstance(voltage, (int, float))
+            or voltage < profile.minimum_target_voltage
+        ):
             failures.append(f"unsafe or missing target voltage {voltage!r}")
         probe = str(parsed.get("probe_serial", ""))
         if not selector.probe_serial or not self._serial_equal(
             probe, selector.probe_serial
         ):
-            failures.append(
-                f"probe serial {probe!r} != {selector.probe_serial!r}"
-            )
+            failures.append(f"probe serial {probe!r} != {selector.probe_serial!r}")
         if failures:
             raise TargetSelectionError(
                 "positive target identification failed: " + "; ".join(failures)
@@ -397,7 +426,7 @@ class JLinkService:
         result.target_identity = {
             "board_serial": selector.board_serial,
             "target_profile": selector.target_profile,
-            "core": selector.core.value,
+            "core": selector.core,
             "observed_core": identity.get("core"),
             "cpuid": identity.get("cpuid"),
             "dpidr": identity.get("dpidr"),
@@ -422,9 +451,7 @@ class JLinkService:
             destructive=False,
         )
 
-    async def disconnect(
-        self, selector: DeviceSelector | None = None
-    ) -> CommandResult:
+    async def disconnect(self, selector: DeviceSelector | None = None) -> CommandResult:
         """Return the explicit state of Commander's session-scoped connection."""
 
         resolved = await self.resolve_selector_wait(selector)
@@ -618,7 +645,10 @@ class JLinkService:
             raise ValueError("invalid erase range")
         command = "Erase" if start is None else f"Erase 0x{start:X}, 0x{end:X}"
         return await self.commander_commands(
-            [command], selector=selector, action="erase_flash", destructive=True,
+            [command],
+            selector=selector,
+            action="erase_flash",
+            destructive=True,
             timeout=180,
         )
 
@@ -640,9 +670,7 @@ class JLinkService:
             timeout=180,
         )
 
-    async def probe_info(
-        self, selector: DeviceSelector | None = None
-    ) -> CommandResult:
+    async def probe_info(self, selector: DeviceSelector | None = None) -> CommandResult:
         return await self.commander_commands(
             ["ShowFWInfo", "ShowHWStatus", "ShowConf", "Uptime"],
             selector=selector,
@@ -757,11 +785,10 @@ class JLinkService:
         if not 0 <= resume_settle_seconds <= 5:
             raise ValueError("resume_settle_seconds must be between 0 and 5")
         if resume_settle_seconds and not resume_after_preflight:
-            raise ValueError(
-                "resume_settle_seconds requires resume_after_preflight"
-            )
+            raise ValueError("resume_settle_seconds requires resume_after_preflight")
         if not destructive and (
-            len(args) != 1 or args[0].lower() not in _INFORMATIONAL_APPLICATION_ARGUMENTS
+            len(args) != 1
+            or args[0].lower() not in _INFORMATIONAL_APPLICATION_ARGUMENTS
         ):
             raise ValueError(
                 "non-destructive SEGGER application use is limited to one help/version argument"
@@ -976,6 +1003,73 @@ class JLinkService:
         )
         return result
 
+    async def audited_serial_operation(
+        self,
+        operation: Callable[[str], Awaitable[CommandResult]],
+        *,
+        selector: DeviceSelector | None,
+        action: str,
+        destructive: bool,
+        request: dict[str, Any],
+        timeout: float,
+    ) -> CommandResult:
+        """Run one extension serial operation behind identity, lease, and audit gates."""
+
+        resolved = await self.resolve_selector_wait(selector)
+        matching_gdb = next(
+            (
+                session_id
+                for session_id, active in self._gdb_selectors.items()
+                if active.probe_serial == resolved.probe_serial
+                and active.board_serial == resolved.board_serial
+                and active.core == resolved.core
+            ),
+            None,
+        )
+        identity_data: dict[str, Any]
+        resume_operation_id: str | None = None
+        if matching_gdb:
+            identity_data = self._gdb_identities[matching_gdb]
+            board = await self._wait_for_serial_board(resolved)
+            assert board.serial_port is not None
+            result = await operation(board.serial_port)
+            result.session_id = matching_gdb
+        else:
+            assert resolved.probe_serial is not None
+            async with self.leases.lease(
+                resolved.probe_serial,
+                owner=action,
+                timeout=max(timeout, self.settings.default_timeout_seconds),
+            ) as lease:
+                identity = await self._identity_preflight(resolved, lease.lease_id)
+                identity_data = identity.parsed
+                resume = await self._resume_after_identity_preflight(
+                    resolved,
+                    lease.lease_id,
+                    identity_data,
+                    action=f"{action}_resume",
+                )
+                resume_operation_id = resume.operation_id
+                board = await self._wait_for_serial_board(resolved)
+                assert board.serial_port is not None
+                result = await operation(board.serial_port)
+                result.session_id = lease.lease_id
+        result.parsed["selector"] = resolved.model_dump(mode="json")
+        if resume_operation_id:
+            result.parsed["resume_operation_id"] = resume_operation_id
+        self._attach_identities(result, resolved, identity_data)
+        self.store.append_operation(
+            result=result,
+            action=action,
+            probe_serial=resolved.probe_serial,
+            destructive=destructive,
+            request={
+                "selector": resolved.model_dump(mode="json"),
+                **request,
+            },
+        )
+        return result
+
     async def start_gdb(
         self,
         *,
@@ -984,11 +1078,7 @@ class JLinkService:
     ) -> dict[str, Any]:
         resolved = await self.resolve_selector_wait(selector)
         assert resolved.probe_serial is not None
-        path = (
-            self.settings.resolve_allowed_path(elf_path)
-            if elf_path
-            else None
-        )
+        path = self.settings.resolve_allowed_path(elf_path) if elf_path else None
         lease = await self.leases.acquire(
             resolved.probe_serial,
             owner="gdb_session",
@@ -1025,7 +1115,7 @@ class JLinkService:
             target_identity={
                 "board_serial": resolved.board_serial,
                 "target_profile": resolved.target_profile,
-                "core": resolved.core.value,
+                "core": resolved.core,
             },
         )
         self.store.append_operation(
@@ -1095,7 +1185,7 @@ class JLinkService:
             result.target_identity = {
                 "board_serial": selector.board_serial,
                 "target_profile": selector.target_profile,
-                "core": selector.core.value,
+                "core": selector.core,
             }
         self.store.append_operation(
             result=result,
@@ -1135,7 +1225,9 @@ class JLinkService:
 
         path = self.settings.resolve_allowed_path(screenshot_path)
         result = await self.gui.ocr(path)
-        result.artifact_hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        result.artifact_hashes[str(path)] = hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
         self.store.append_operation(
             result=result,
             action="gui_ocr",
@@ -1210,7 +1302,7 @@ class JLinkService:
                 target_identity={
                     "board_serial": selector.board_serial,
                     "target_profile": selector.target_profile,
-                    "core": selector.core.value,
+                    "core": selector.core,
                 },
             )
             self.store.append_operation(

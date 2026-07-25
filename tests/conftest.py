@@ -12,9 +12,9 @@ from jlink_mcp.models import (
     CapabilityManifest,
     CommandResult,
     ProbeCapabilities,
-    TargetCore,
     USBDevice,
 )
+from jlink_mcp.profiles import CoreProfile, TargetProfile, TargetRegistry
 
 
 @pytest.fixture
@@ -24,8 +24,7 @@ def settings(tmp_path: Path) -> Settings:
     segger = tmp_path / "segger"
     host_dev = tmp_path / "dev"
     sys_usb = tmp_path / "sys-usb"
-    arduino = tmp_path / "arduino"
-    for directory in (workspace, state, segger, host_dev, sys_usb, arduino):
+    for directory in (workspace, state, segger, host_dev, sys_usb):
         directory.mkdir(parents=True)
     token_file = tmp_path / "token"
     token_file.write_text("test-token\n", encoding="utf-8")
@@ -36,10 +35,8 @@ def settings(tmp_path: Path) -> Settings:
         segger_root=segger,
         host_dev_root=host_dev,
         sys_usb_root=sys_usb,
-        arduino_data_root=arduino,
         token_file=token_file,
-        arduino_cli="arduino-cli",
-        arm_gdb="arm-none-eabi-gdb",
+        gdb_client="gdb-client",
         default_timeout_seconds=0.2,
     )
     result.ensure_directories()
@@ -56,9 +53,9 @@ def manifest() -> CapabilityManifest:
         device_nodes=["/dev/bus/usb/001/002"],
     )
     board_usb = USBDevice(
-        kind="arduino",
-        vendor_id="2341",
-        product_id="0266",
+        kind="usb",
+        vendor_id="1234",
+        product_id="5678",
         serial="0045002B3333511632363530",
         device_nodes=["/dev/ttyACM0"],
     )
@@ -78,10 +75,10 @@ def manifest() -> CapabilityManifest:
         boards=[
             BoardCapabilities(
                 serial="0045002B3333511632363530",
-                model="Arduino GIGA R1 WiFi",
-                fqbn="arduino:mbed_giga:giga",
-                mcu="STM32H747XI",
-                cores=[TargetCore.M7, TargetCore.M4],
+                model="Sample target",
+                target_profile="sample_target",
+                mcu="SAMPLE",
+                cores=["primary", "secondary"],
                 usb=board_usb,
                 serial_port="/dev/ttyACM0",
             )
@@ -90,6 +87,34 @@ def manifest() -> CapabilityManifest:
         selected_probe_serial="000802008248",
         selected_board_serial="0045002B3333511632363530",
     )
+
+
+@pytest.fixture
+def target_registry() -> TargetRegistry:
+    registry = TargetRegistry()
+    registry.register_profile(
+        TargetProfile(
+            id="sample_target",
+            display_name="Sample target",
+            cores={
+                "primary": CoreProfile(
+                    id="primary",
+                    jlink_device="SAMPLE_PRIMARY",
+                    expected_core="Cortex-M7",
+                    expected_cpuid=0x411FC271,
+                ),
+                "secondary": CoreProfile(
+                    id="secondary",
+                    jlink_device="SAMPLE_SECONDARY",
+                    expected_core="Cortex-M4",
+                    expected_cpuid=0x410FC241,
+                ),
+            },
+            default_core="primary",
+            expected_dpidr=0x6BA02477,
+        )
+    )
+    return registry
 
 
 def make_result(

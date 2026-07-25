@@ -14,5 +14,6 @@ state/
 .env
 .env.hardware
 .token
+.bridge-profiles.json
 *.log
 firmware/**/build/

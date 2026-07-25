@@ -3,7 +3,7 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from .conftest import GUI_ENABLED, session, unpack
+from .support import GUI_ENABLED, session, unpack
 
 
 pytestmark = [
@@ -16,6 +16,12 @@ pytestmark = [
 @pytest.mark.asyncio
 async def test_installed_segger_gui_accessibility_screenshot_and_ocr(selector) -> None:
     async with session() as client:
+        doctor = unpack(await client.call_tool("dependency_doctor", {}))
+        assert not [
+            check["name"]
+            for check in doctor["checks"]
+            if check["required"] and not check["ok"]
+        ]
         capabilities = unpack(await client.call_tool("get_capabilities", {}))
         installed = {
             item["name"]
@@ -36,11 +42,7 @@ async def test_installed_segger_gui_accessibility_screenshot_and_ocr(selector) -
             "JMemExe",
             "JScopeExe",
         }
-        candidates = sorted(
-            name
-            for name in gui_allowlist
-            if name in installed
-        )
+        candidates = sorted(name for name in gui_allowlist if name in installed)
         assert candidates
         for application in candidates:
             launched = unpack(
@@ -80,7 +82,8 @@ async def test_installed_segger_gui_accessibility_screenshot_and_ocr(selector) -
                 assert screenshot["evidence_paths"]
                 ocr = unpack(
                     await client.call_tool(
-                        "gui_ocr", {"screenshot_path": screenshot["evidence_paths"][-1]}
+                        "gui_ocr",
+                        {"screenshot_path": screenshot["evidence_paths"][-1]},
                     )
                 )
                 assert ocr["return_code"] == 0

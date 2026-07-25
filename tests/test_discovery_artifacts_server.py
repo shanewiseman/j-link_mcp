@@ -11,15 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from jlink_mcp import artifacts, discovery, doctor
-from jlink_mcp.artifacts import (
-    finalize_fixture_elf,
-    inspect_elf,
-    registerable_artifact,
-    verify_fixture_elf,
-)
+from jlink_mcp import discovery, doctor
+from jlink_mcp.artifacts import inspect_elf, registerable_artifact
 from jlink_mcp.models import CapabilityState
-from jlink_mcp.server import BearerTokenASGI, MCPRuntime
+from jlink_mcp.server import BearerTokenASGI, CORE_TOOL_NAMES, MCPRuntime
 
 
 class Attributes:
@@ -49,24 +44,24 @@ def test_usb_discovery_udev_and_sysfs_fallback(monkeypatch) -> None:
         {},
         node="/dev/bus/usb/001/002",
     )
-    giga = Device(
+    target = Device(
         {"BUSNUM": "001", "DEVNUM": "003"},
         {
             "idVendor": b"2341\n",
             "idProduct": b"0266\n",
             "serial": b"G1\n",
-            "manufacturer": b"Arduino\n",
-            "product": b"GIGA R1\n",
+            "manufacturer": b"Example\n",
+            "product": b"Sample target\n",
         },
         children=[tty],
     )
     ignored = Device({}, {"idVendor": b"1234", "idProduct": b"0001"})
     context = SimpleNamespace(
-        list_devices=lambda **kwargs: [jlink, giga, ignored]
+        list_devices=lambda **kwargs: [jlink, target, ignored]
     )
     monkeypatch.setattr(discovery.pyudev, "Context", lambda: context)
     found = discovery.discover_usb_devices()
-    assert [item.kind for item in found] == ["jlink", "arduino"]
+    assert [item.kind for item in found] == ["jlink", "usb", "usb"]
     assert found[1].serial == "G1"
     assert found[1].device_nodes == ["/dev/ttyACM7"]
     assert discovery._clean_hex("0XAB") == "00ab"
@@ -81,17 +76,15 @@ def _executable(path: Path) -> Path:
     return path
 
 
-def test_tool_and_capability_discovery(settings, monkeypatch, manifest) -> None:
+def test_tool_and_capability_discovery(
+    settings, monkeypatch, manifest, target_registry
+) -> None:
     settings.segger_root = settings.segger_root.parent / "JLink_V962"
     settings.segger_root.mkdir()
     for name in ("JLinkExe", "JLinkGDBServerCLExe", "JLinkRTTLoggerExe"):
         _executable(settings.segger_root / name)
-    cli = _executable(settings.workspace_root / "arduino-cli")
-    gdb = _executable(settings.workspace_root / "bin" / "arm-none-eabi-gdb")
-    for name in ("objcopy", "objdump", "nm"):
-        _executable(gdb.parent / f"arm-none-eabi-{name}")
-    settings.arduino_cli = str(cli)
-    settings.arm_gdb = str(gdb)
+    gdb = _executable(settings.workspace_root / "bin" / "gdb-client")
+    settings.gdb_client = str(gdb)
     monkeypatch.setattr(
         discovery.shutil,
         "which",
@@ -103,8 +96,12 @@ def test_tool_and_capability_discovery(settings, monkeypatch, manifest) -> None:
     lookup = {item.name: item for item in tools}
     assert lookup["JLinkExe"].version == "9.62"
     assert lookup["JFlashExe"].state == CapabilityState.UNAVAILABLE
-    assert lookup["arduino-cli"].state == CapabilityState.AVAILABLE
-    capability = discovery.capability_manifest(settings)
+    assert lookup["gdb-client"].state == CapabilityState.AVAILABLE
+    target_registry.register_board_detector(
+        "sample-usb",
+        lambda usb: manifest.boards[0] if usb.serial == manifest.boards[0].serial else None,
+    )
+    capability = discovery.capability_manifest(settings, target_registry)
     assert capability.unique_pair
     assert capability.selected_probe_serial == "000802008248"
     assert capability.workflows["flash_verify"] == CapabilityState.AVAILABLE
@@ -126,8 +123,10 @@ def test_segger_version_release_notes_and_groups(tmp_path: Path, monkeypatch) ->
     assert discovery.current_groups() == {"plugdev"}
 
 
-def test_dependency_doctor_full_matrix(settings, manifest, monkeypatch, tmp_path: Path) -> None:
-    # Make all synthetic nodes and pinned Arduino assets observable.
+def test_dependency_doctor_full_matrix(
+    settings, manifest, monkeypatch, tmp_path: Path, target_registry
+) -> None:
+    # Make all synthetic nodes and target-neutral prerequisites observable.
     probe_node = tmp_path / "jlink-node"
     board_node = tmp_path / "ttyACM0"
     for node in (probe_node, board_node):
@@ -136,7 +135,7 @@ def test_dependency_doctor_full_matrix(settings, manifest, monkeypatch, tmp_path
     manifest.probes[0].usb.device_nodes = [str(probe_node)]
     manifest.boards[0].usb.device_nodes = [str(board_node)]
     manifest.boards[0].serial_port = str(board_node)
-    for tool in ("JLinkExe", "JLinkGDBServerCLExe", "arduino-cli", "arm-none-eabi-gdb", "arm-none-eabi-objcopy", "arm-none-eabi-objdump", "arm-none-eabi-nm", "openocd", "dfu-util", "imgtool", "Xvfb", "xdotool"):
+    for tool in ("JLinkExe", "JLinkGDBServerCLExe", "gdb-client", "Xvfb", "xdotool"):
         from jlink_mcp.models import ToolAvailability
         manifest.tools.append(
             ToolAvailability(
@@ -146,17 +145,9 @@ def test_dependency_doctor_full_matrix(settings, manifest, monkeypatch, tmp_path
                 version="9.62" if tool == "JLinkExe" else None,
             )
         )
-    platform_root = settings.arduino_data_root / "packages/arduino/hardware/mbed_giga/4.6.0"
-    for relative in (
-        "platform.txt",
-        "svd/STM32H747_CM7.svd",
-        "svd/STM32H747_CM4.svd",
-        "bootloaders/GIGA/bootloader.hex",
-    ):
-        path = platform_root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
-    monkeypatch.setattr(doctor, "capability_manifest", lambda settings: manifest)
+    monkeypatch.setattr(
+        doctor, "capability_manifest", lambda settings, targets=None: manifest
+    )
     monkeypatch.setattr(doctor, "current_groups", lambda: {"plugdev", "dialout"})
     monkeypatch.setattr(doctor, "_filesystem_type", lambda path: "cgroup2fs")
     monkeypatch.setattr(doctor, "_command_ok", lambda argv: True)
@@ -166,17 +157,17 @@ def test_dependency_doctor_full_matrix(settings, manifest, monkeypatch, tmp_path
         "_device_group",
         lambda path: "dialout" if path.name.startswith("tty") else "plugdev",
     )
-    report = doctor.dependency_report(settings)
+    report = doctor.dependency_report(settings, target_registry)
     assert report.ok
     assert all(check.ok for check in report.checks if check.required)
-    assert doctor._device_modes_ok(manifest, settings)
-    assert "0660" in doctor._device_mode_summary(manifest, settings)
+    assert doctor.device_modes_ok(manifest, settings)
+    assert "0660" in doctor.device_mode_summary(manifest, settings)
     board_node.chmod(0o666)
-    assert not doctor._device_modes_ok(manifest, settings)
-    assert doctor._directory_access(settings.workspace_root, write=True)
-    assert doctor._tool_ok({item.name: item for item in manifest.tools}, "JLinkExe")
-    assert doctor._tool_path({}, "missing") is None
-    assert doctor._tool_version({}, "missing") is None
+    assert not doctor.device_modes_ok(manifest, settings)
+    assert doctor.directory_access(settings.workspace_root, write=True)
+    assert doctor.tool_ok({item.name: item for item in manifest.tools}, "JLinkExe")
+    assert doctor.tool_path({}, "missing") is None
+    assert doctor.tool_version({}, "missing") is None
 
 
 def _build_synthetic_fixture(tmp_path: Path) -> Path:
@@ -206,22 +197,13 @@ def _build_synthetic_fixture(tmp_path: Path) -> Path:
     return elf
 
 
-def test_fixture_elf_finalize_verify_inspect_and_corruption(tmp_path: Path) -> None:
+def test_generic_elf_inspect_and_register(tmp_path: Path) -> None:
     elf = _build_synthetic_fixture(tmp_path)
     inspection = inspect_elf(elf)
     assert inspection["entry"] == 0x08000000
     assert "jlink_mcp_manifest" in inspection["test_symbols"]
-    finalized = finalize_fixture_elf(elf)
-    assert finalized["flash_start"] == "0x08000000"
-    assert finalized["ram_start"] == "0x24000000"
-    assert verify_fixture_elf(elf)["ok"]
     artifact = registerable_artifact(elf, kind="elf")
     assert artifact.sha256 == hashlib.sha256(elf.read_bytes()).hexdigest()
-    blob = bytearray(elf.read_bytes())
-    offset, _, _ = artifacts._manifest_location(blob)
-    blob[offset + 140] ^= 0x01
-    elf.write_bytes(blob)
-    assert not verify_fixture_elf(elf)["ok"]
     invalid = tmp_path / "not-elf"
     invalid.write_bytes(b"not elf")
     with pytest.raises(Exception):
@@ -266,17 +248,9 @@ def test_mcp_runtime_registers_complete_tool_surface(settings) -> None:
     runtime = MCPRuntime(settings)
     tools = asyncio.run(runtime.mcp.list_tools())
     names = {tool.name for tool in tools}
-    assert len(names) >= 56
-    assert {
-        "get_capabilities",
-        "raw_commander",
-        "start_gdb_session",
-        "capture_rtt",
-        "launch_segger_gui",
-        "validate_giga_fixture",
-        "prepare_giga_dual_core_debug",
-        "restore_flash_backup",
-    } <= names
+    assert names == CORE_TOOL_NAMES
+    assert not runtime.registry.targets.profiles
+    assert runtime.extensions.loaded_ids == []
     clear = next(tool for tool in tools if tool.name == "clear_breakpoint")
     assert clear.annotations.destructiveHint is True
     asyncio.run(runtime.service.close())

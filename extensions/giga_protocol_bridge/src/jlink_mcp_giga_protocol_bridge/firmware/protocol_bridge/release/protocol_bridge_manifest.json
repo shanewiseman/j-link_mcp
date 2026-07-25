@@ -1,0 +1,23 @@
+{
+  "arduino_cli": "1.5.1",
+  "arduino_core": "arduino:mbed_giga@4.6.0",
+  "board_options": "target_core=cm7,split=75_25",
+  "build_id": "protocol-bridge-1.0.0-cbaef88b6647",
+  "build_timestamp": "2026-07-25T00:00:00Z",
+  "firmware_version": "1.0.0",
+  "fqbn": "arduino:mbed_giga:giga",
+  "hex": {
+    "filename": "protocol_bridge_m7.hex",
+    "sha256": "1b51673aed3a51424154864ee6b3a7674c075611aff776d1e2e6cfb4aaab4f60",
+    "size": 1373424
+  },
+  "libraries": {
+    "ArduinoBLE": "2.1.0",
+    "Arduino_SpiNINA": "0.0.2",
+    "Arduino_USBHostMbed5": "0.3.1"
+  },
+  "schema_version": 1,
+  "source_date_epoch": 1784937600,
+  "source_sha256": "cbaef88b66472b29d043d7e8725cc2298d219d800b78b6c82138a14cfbfea645",
+  "wire_version": 1
+}
