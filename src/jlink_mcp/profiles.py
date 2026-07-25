@@ -8,7 +8,14 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-from .models import BoardCapabilities, USBDevice
+from .models import BoardCapabilities, USBDevice, normalize_selector_identifier
+
+
+def _require_canonical_identifier(value: Any, kind: str) -> str:
+    normalized = normalize_selector_identifier(value)
+    if not isinstance(normalized, str) or normalized != value:
+        raise ValueError(f"{kind} must use the canonical selector identifier format")
+    return normalized
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,8 +30,7 @@ class CoreProfile:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.id:
-            raise ValueError("core profile id must not be empty")
+        _require_canonical_identifier(self.id, "core profile id")
         if not self.jlink_device:
             raise ValueError("core profile jlink_device must not be empty")
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
@@ -46,8 +52,7 @@ class TargetProfile:
 
     def __post_init__(self) -> None:
         cores = dict(self.cores)
-        if not self.id:
-            raise ValueError("target profile id must not be empty")
+        _require_canonical_identifier(self.id, "target profile id")
         if not cores:
             raise ValueError("target profile must declare at least one core")
         if self.default_core not in cores:
@@ -66,6 +71,7 @@ class TargetProfile:
                 "target profile default_speed_khz must be between 5 and 50000"
             )
         for core_id, profile in cores.items():
+            _require_canonical_identifier(core_id, "target profile core key")
             if core_id != profile.id:
                 raise ValueError("target profile core key must match CoreProfile.id")
         object.__setattr__(self, "cores", MappingProxyType(cores))

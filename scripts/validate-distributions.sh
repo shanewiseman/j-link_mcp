@@ -32,11 +32,14 @@ PY
 for package in core giga bridge; do
   mkdir "$distribution_dir/$package"
 done
-.venv/bin/python -m pip install --no-deps --target "$distribution_dir/core" \
+.venv/bin/uv pip install --python .venv/bin/python --no-deps \
+  --target "$distribution_dir/core" \
   "$core_wheel"
-.venv/bin/python -m pip install --no-deps --target "$distribution_dir/giga" \
+.venv/bin/uv pip install --python .venv/bin/python --no-deps \
+  --target "$distribution_dir/giga" \
   "$core_wheel" "$giga_wheel"
-.venv/bin/python -m pip install --no-deps --target "$distribution_dir/bridge" \
+.venv/bin/uv pip install --python .venv/bin/python --no-deps \
+  --target "$distribution_dir/bridge" \
   "$core_wheel" "$giga_wheel" "$bridge_wheel"
 
 DIST_ROOT="$distribution_dir" .venv/bin/python - <<'PY'

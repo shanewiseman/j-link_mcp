@@ -142,6 +142,34 @@ async def test_explicit_enablement_dependency_order_and_reverse_shutdown() -> No
     assert events[-2:] == ["shutdown:child", "shutdown:base"]
 
 
+def test_extension_services_require_declared_dependencies_and_allow_self() -> None:
+    events: list[str] = []
+
+    def register_base(context) -> None:
+        context.publish_service("public", "base-service")
+        assert context.require_extension_service("base", "public") == "base-service"
+
+    def register_child(context) -> None:
+        assert context.require_extension_service("base", "public") == "base-service"
+
+    loaded = manager(
+        [
+            FakeExtension("base", events, register=register_base),
+            FakeExtension(
+                "child", events, dependencies=("base",), register=register_child
+            ),
+        ]
+    )
+    loaded.load()
+    assert loaded.loaded_ids == ["base", "child"]
+
+    undeclared = FakeExtension("undeclared", events, register=register_child)
+    with pytest.raises(ExtensionError, match="declared dependency"):
+        manager(
+            [FakeExtension("base", events, register=register_base), undeclared]
+        ).load()
+
+
 def test_toml_configuration_and_environment_precedence(tmp_path: Path) -> None:
     path = tmp_path / "extensions.toml"
     path.write_text(

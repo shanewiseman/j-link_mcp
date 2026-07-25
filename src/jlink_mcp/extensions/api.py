@@ -204,8 +204,10 @@ class ExtensionContext:
         services: ExtensionServices,
         registry: ExtensionRegistry,
         mcp: Any,
+        dependencies: Sequence[str] = (),
     ) -> None:
         self.extension_id = extension_id
+        self.dependencies = frozenset(dependencies)
         self.config = config
         self.services = services
         self._registry = registry
@@ -263,6 +265,11 @@ class ExtensionContext:
         self._rollback_actions.append(lambda: self._registry._services.pop(key, None))
 
     def require_extension_service(self, extension_id: str, name: str) -> Any:
+        if extension_id != self.extension_id and extension_id not in self.dependencies:
+            raise ExtensionError(
+                "extension service access requires a declared dependency: "
+                f"{self.extension_id} -> {extension_id}"
+            )
         try:
             return self._registry._services[(extension_id, name)]
         except KeyError as exc:

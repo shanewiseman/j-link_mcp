@@ -104,6 +104,7 @@ class ExtensionManager:
                     services=self.services,
                     registry=self.registry,
                     mcp=self.mcp,
+                    dependencies=extension.dependencies,
                 )
                 contexts.append(context)
                 started.append(extension)

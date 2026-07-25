@@ -264,6 +264,36 @@ void appendText(char* destination, size_t capacity, const char* text) {
   strncat(destination, text, capacity - current - 1);
 }
 
+bool encodeJsonString(const char* input, char* output, size_t capacity) {
+  if (!input || capacity < 3) return false;
+  size_t written = 0;
+  output[written++] = '"';
+  for (const uint8_t* cursor = reinterpret_cast<const uint8_t*>(input); *cursor;
+       ++cursor) {
+    char encoded[7] = {};
+    size_t encoded_length = 1;
+    if (*cursor == '"' || *cursor == '\\') {
+      encoded[0] = '\\';
+      encoded[1] = static_cast<char>(*cursor);
+      encoded_length = 2;
+    } else if (*cursor < 0x20 || *cursor > 0x7E) {
+      snprintf(encoded, sizeof(encoded), "\\u00%02X", *cursor);
+      encoded_length = 6;
+    } else {
+      encoded[0] = static_cast<char>(*cursor);
+    }
+    if (written + encoded_length + 2 > capacity) {
+      output[0] = '\0';
+      return false;
+    }
+    memcpy(output + written, encoded, encoded_length);
+    written += encoded_length;
+  }
+  output[written++] = '"';
+  output[written] = '\0';
+  return true;
+}
+
 void buildStatusMetadata() {
   snprintf(metadata_buffer, sizeof(metadata_buffer),
            "{\"firmware_version\":\"%s\",\"wire_version\":%u,"
@@ -998,11 +1028,26 @@ void bleScan(const TlvReader& reader, uint32_t request_id) {
   while (static_cast<int32_t>(deadline - millis()) > 0 && count < 16) {
     BLEDevice device = BLE.available();
     if (!device) { BLE.poll(); delay(5); continue; }
-    char item[260];
-    snprintf(item, sizeof(item),
-             "%s{\"address\":\"%s\",\"name\":\"%s\",\"rssi\":%d}",
-             first ? "" : ",", device.address().c_str(),
-             device.hasLocalName() ? device.localName().c_str() : "", device.rssi());
+    const String address = device.address();
+    const String local_name = device.hasLocalName() ? device.localName() : "";
+    char escaped_address[128] = {};
+    char escaped_name[384] = {};
+    if (!encodeJsonString(address.c_str(), escaped_address,
+                          sizeof(escaped_address)) ||
+        !encodeJsonString(local_name.c_str(), escaped_name,
+                          sizeof(escaped_name))) {
+      continue;
+    }
+    char item[640];
+    const int item_length = snprintf(
+        item, sizeof(item), "%s{\"address\":%s,\"name\":%s,\"rssi\":%d}",
+        first ? "" : ",", escaped_address, escaped_name, device.rssi());
+    const size_t current = strnlen(metadata_buffer, sizeof(metadata_buffer));
+    if (item_length < 0 || static_cast<size_t>(item_length) >= sizeof(item) ||
+        current + static_cast<size_t>(item_length) + 3 >=
+            sizeof(metadata_buffer)) {
+      break;
+    }
     appendText(metadata_buffer, sizeof(metadata_buffer), item);
     first = false;
     ++count;
@@ -1101,19 +1146,31 @@ void bleDiscover(const TlvReader& reader, uint32_t request_id) {
   }
   metadata_buffer[0] = '\0';
   appendText(metadata_buffer, sizeof(metadata_buffer), "{\"services\":[");
+  bool first = true;
   for (int index = 0; index < ble_peer.serviceCount(); ++index) {
     BLEService service = ble_peer.service(index);
-    char item[80];
-    snprintf(item, sizeof(item), "%s\"%s\"", index ? "," : "", service.uuid());
+    char escaped_uuid[224] = {};
+    if (!encodeJsonString(service.uuid(), escaped_uuid, sizeof(escaped_uuid))) {
+      continue;
+    }
+    char item[228];
+    snprintf(item, sizeof(item), "%s%s", first ? "" : ",", escaped_uuid);
     appendText(metadata_buffer, sizeof(metadata_buffer), item);
+    first = false;
   }
   appendText(metadata_buffer, sizeof(metadata_buffer), "],\"characteristics\":[");
+  first = true;
   for (int index = 0; index < ble_peer.characteristicCount(); ++index) {
     BLECharacteristic characteristic = ble_peer.characteristic(index);
-    char item[80];
-    snprintf(item, sizeof(item), "%s\"%s\"", index ? "," : "",
-             characteristic.uuid());
+    char escaped_uuid[224] = {};
+    if (!encodeJsonString(characteristic.uuid(), escaped_uuid,
+                          sizeof(escaped_uuid))) {
+      continue;
+    }
+    char item[228];
+    snprintf(item, sizeof(item), "%s%s", first ? "" : ",", escaped_uuid);
     appendText(metadata_buffer, sizeof(metadata_buffer), item);
+    first = false;
   }
   appendText(metadata_buffer, sizeof(metadata_buffer), "]}");
   sendResponse(request_id, kStatusOk, nullptr, 0, metadata_buffer);

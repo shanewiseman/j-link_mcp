@@ -14,6 +14,24 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def normalize_selector_identifier(value: Any) -> Any:
+    """Normalize identifiers before selector or extension-specific type parsing."""
+
+    if value is None or not isinstance(value, str):
+        return value
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > 128
+        or not normalized.replace("-", "").replace("_", "").isalnum()
+    ):
+        raise ValueError(
+            "target profile and core identifiers must be non-empty "
+            "alphanumerics with '-' or '_'"
+        )
+    return normalized
+
+
 class TargetState(StrEnum):
     UNKNOWN = "unknown"
     DISCONNECTED = "disconnected"
@@ -66,21 +84,7 @@ class DeviceSelector(BaseModel):
     @field_validator("target_profile", "core", mode="before")
     @classmethod
     def validate_identifier(cls, value: Any) -> Any:
-        if value is None:
-            return value
-        if not isinstance(value, str):
-            return value
-        value = value.strip()
-        if (
-            not value
-            or len(value) > 128
-            or not value.replace("-", "").replace("_", "").isalnum()
-        ):
-            raise ValueError(
-                "target profile and core identifiers must be non-empty "
-                "alphanumerics with '-' or '_'"
-            )
-        return value
+        return normalize_selector_identifier(value)
 
 
 class USBDevice(BaseModel):

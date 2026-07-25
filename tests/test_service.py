@@ -122,6 +122,48 @@ def test_target_profile_rejects_unsafe_defaults(overrides, message) -> None:
         TargetProfile(**values)
 
 
+@pytest.mark.parametrize("invalid", ["has space", "!bad", "x" * 129, " padded "])
+def test_target_profiles_reject_unselectable_identifiers(invalid: str) -> None:
+    with pytest.raises(ValueError, match="identifier|canonical"):
+        CoreProfile(
+            id=invalid,
+            jlink_device="INVALID",
+            expected_core="Invalid-Core",
+            expected_cpuid=1,
+        )
+    core = CoreProfile(
+        id="x" * 128,
+        jlink_device="VALID",
+        expected_core="Valid-Core",
+        expected_cpuid=1,
+    )
+    with pytest.raises(ValueError, match="identifier|canonical"):
+        TargetProfile(
+            id=invalid,
+            display_name="Invalid",
+            cores={core.id: core},
+            default_core=core.id,
+            expected_dpidr=1,
+        )
+
+
+def test_target_profile_accepts_selector_identifier_boundary() -> None:
+    core = CoreProfile(
+        id="c" * 128,
+        jlink_device="VALID",
+        expected_core="Valid-Core",
+        expected_cpuid=1,
+    )
+    profile = TargetProfile(
+        id="p" * 128,
+        display_name="Valid",
+        cores={core.id: core},
+        default_core=core.id,
+        expected_dpidr=1,
+    )
+    assert profile.id == "p" * 128
+
+
 def test_selector_uses_profile_defaults_only_for_omitted_fields(
     settings, manifest, monkeypatch
 ) -> None:

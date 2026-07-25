@@ -60,6 +60,19 @@ def _b64(value: bytes) -> str:
     return base64.b64encode(value).decode("ascii")
 
 
+def test_firmware_json_escapes_peer_controlled_ble_strings() -> None:
+    source = (
+        Path(__file__).parents[1]
+        / "src/jlink_mcp_giga_protocol_bridge/firmware/protocol_bridge/protocol_bridge.ino"
+    ).read_text(encoding="utf-8")
+    assert "bool encodeJsonString(" in source
+    assert "encodeJsonString(address.c_str()" in source
+    assert "encodeJsonString(local_name.c_str()" in source
+    assert "encodeJsonString(service.uuid()" in source
+    assert "encodeJsonString(characteristic.uuid()" in source
+    assert '\\u00%02X' in source
+
+
 def test_contracts_reject_ambiguous_payloads_and_protected_pins() -> None:
     assert decode_canonical_base64("AA==") == b"\x00"
     for invalid in ("AA", "A===", "not base64"):
