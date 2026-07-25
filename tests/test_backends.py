@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import hashlib
 import sys
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import cv2
 import numpy as np
-import pytest
 import psutil
+import pytest
+from conftest import make_result
 from pygdbmi.IoManager import GdbTimeoutError
 
 from jlink_mcp.backends.application import ApplicationBackend
@@ -24,9 +25,6 @@ from jlink_mcp.backends.gui import GUIBackend, GUIProcess
 from jlink_mcp.backends.serial import SerialBackend
 from jlink_mcp.models import DeviceSelector, TargetState
 from jlink_mcp.runner import ProcessRunner
-
-from conftest import make_result
-
 
 COMMANDER_962 = """
 SEGGER J-Link Commander V9.62 (Compiled Jul  1 2026 12:00:00)
@@ -63,9 +61,7 @@ def test_commander_962_golden_parser() -> None:
         "dpidr": "0x6BA02477",
         "pc": "0x08012345",
         "exception": "HardFault",
-        "memory": [
-            {"address": "0x20000000", "values": ["0x11223344", "0xAABBCCDD"]}
-        ],
+        "memory": [{"address": "0x20000000", "values": ["0x11223344", "0xAABBCCDD"]}],
         "registers": {
             "PC": "0x08012345",
             "CYCLECNT": "0x00000000",
@@ -84,9 +80,15 @@ def test_commander_962_golden_parser() -> None:
 
 @pytest.mark.parametrize(
     ("output", "connected"),
-    [("Cannot connect to target", False), ("Could not connect", False), ("noise", None)],
+    [
+        ("Cannot connect to target", False),
+        ("Could not connect", False),
+        ("noise", None),
+    ],
 )
-def test_commander_malformed_and_disconnect(output: str, connected: bool | None) -> None:
+def test_commander_malformed_and_disconnect(
+    output: str, connected: bool | None
+) -> None:
     parsed = parse_commander_output(output)
     assert parsed["flash_verified"] is False
     assert parsed.get("connected") is connected
@@ -101,10 +103,16 @@ def test_commander_state_inference() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_runner_success_failure_timeout_and_truncation(tmp_path: Path) -> None:
+async def test_process_runner_success_failure_timeout_and_truncation(
+    tmp_path: Path,
+) -> None:
     runner = ProcessRunner(max_output_bytes=16)
     ok = await runner.run(
-        [sys.executable, "-c", "import sys; print('x'*100); print('err', file=sys.stderr)"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('x'*100); print('err', file=sys.stderr)",
+        ],
         backend="test",
         cwd=tmp_path,
     )
@@ -159,7 +167,10 @@ async def test_process_runner_timeout_kills_descendant_group(tmp_path: Path) -> 
         if not psutil.pid_exists(child_pid):
             break
         await asyncio.sleep(0.01)
-    assert not psutil.pid_exists(child_pid) or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+    assert (
+        not psutil.pid_exists(child_pid)
+        or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+    )
 
 
 def _fake_executable(settings, name: str) -> Path:
@@ -170,7 +181,9 @@ def _fake_executable(settings, name: str) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_commander_backend_command_file_and_argv(settings, target_registry) -> None:
+async def test_commander_backend_command_file_and_argv(
+    settings, target_registry
+) -> None:
     executable = _fake_executable(settings, "JLinkExe")
     captured = {}
 
@@ -242,6 +255,50 @@ async def test_serial_backend_validation_parsing_and_error(monkeypatch) -> None:
             await backend.exchange("/dev/null", **kwargs)
 
 
+@pytest.mark.asyncio
+async def test_binary_serial_waits_for_worker_cleanup_on_cancellation(
+    monkeypatch,
+) -> None:
+    backend = SerialBackend()
+    monkeypatch.setattr(
+        backend,
+        "_exchange_binary_sync",
+        lambda *args: b"opaque-response",
+    )
+    result, raw = await backend.exchange_binary(
+        "/dev/tty-test", write=b"opaque-request"
+    )
+    assert result.ok and raw == b"opaque-response"
+    assert (
+        result.parsed["request_sha256"] == hashlib.sha256(b"opaque-request").hexdigest()
+    )
+    assert result.parsed["response_sha256"] == hashlib.sha256(raw).hexdigest()
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_exchange(*args) -> bytes:
+        started.set()
+        assert release.wait(timeout=2)
+        return b"late-response"
+
+    monkeypatch.setattr(backend, "_exchange_binary_sync", blocking_exchange)
+    pending = asyncio.create_task(
+        backend.exchange_binary(
+            "/dev/tty-test",
+            write=b"cancelled-request",
+            duration=1,
+        )
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+    pending.cancel()
+    await asyncio.sleep(0.01)
+    assert not pending.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+
 class FakeGDB:
     def __init__(self, response=None, error=None):
         self.response = response or [{"message": "done", "payload": {}}]
@@ -288,12 +345,16 @@ def _gdb_session(gdb=None) -> GDBSession:
 
 
 @pytest.mark.asyncio
-async def test_gdb_command_states_errors_timeout_and_info(settings, target_registry) -> None:
+async def test_gdb_command_states_errors_timeout_and_info(
+    settings, target_registry
+) -> None:
     backend = GDBBackend(settings, ProcessRunner(), target_registry)
     backend._sessions["session"] = _gdb_session()
     result = await backend.command("session", "-exec-continue")
     assert result.ok and result.target_state_after == TargetState.RUNNING
-    assert (await backend.command("session", "-exec-next")).target_state_after == TargetState.HALTED
+    assert (
+        await backend.command("session", "-exec-next")
+    ).target_state_after == TargetState.HALTED
     backend._sessions["session"].gdb = FakeGDB(response=[{"message": "error"}])
     assert (await backend.command("session", "-thread-info")).return_code == 1
     backend._sessions["session"].gdb = FakeGDB(error=GdbTimeoutError("timeout"))
@@ -339,7 +400,9 @@ async def test_gdb_capture_port_success_and_failure(settings, target_registry) -
 
 
 @pytest.mark.asyncio
-async def test_gui_backend_controls_ocr_screenshot_and_image_match(settings, monkeypatch) -> None:
+async def test_gui_backend_controls_ocr_screenshot_and_image_match(
+    settings, monkeypatch
+) -> None:
     backend = GUIBackend(settings, ProcessRunner())
     process = FakeProcess()
     backend._sessions["gui"] = GUIProcess(
@@ -365,7 +428,9 @@ async def test_gui_backend_controls_ocr_screenshot_and_image_match(settings, mon
             return result
 
     backend.runner = Runner()
-    monkeypatch.setattr("jlink_mcp.backends.gui.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "jlink_mcp.backends.gui.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
     assert (await backend.keys("gui", "ctrl+l")).ok
     assert (await backend.click("gui", 1, 2)).ok
     screenshot = await backend.screenshot("gui")

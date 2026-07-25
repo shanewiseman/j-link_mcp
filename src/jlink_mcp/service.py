@@ -154,30 +154,33 @@ class JLinkService:
                 and probe.get("serial")
             ):
                 probe_evidence = probe
-        report.checks.extend(self.extensions.dependency_checks(report.manifest))
-        report.checks.extend(
-            [
-                DependencyCheck(
-                    name="probe-licenses",
-                    ok=bool(probe_evidence.get("licenses")),
-                    observed=str(probe_evidence.get("licenses") or "not observed"),
-                    expected="live license list from J-Link Commander",
-                    remediation="Run get_probe_information for the selected probe.",
-                ),
-                DependencyCheck(
-                    name="container-non-root",
-                    ok=os.geteuid() != 0,
-                    observed=f"uid={os.geteuid()}",
-                    expected="non-root service user",
-                ),
-                DependencyCheck(
-                    name="container-capabilities-dropped",
-                    ok=_effective_capabilities() == 0,
-                    observed=f"CapEff=0x{_effective_capabilities():x}",
-                    expected="CapEff=0",
-                ),
-            ]
+        runtime_checks = [
+            DependencyCheck(
+                name="probe-licenses",
+                ok=bool(probe_evidence.get("licenses")),
+                observed=str(probe_evidence.get("licenses") or "not observed"),
+                expected="live license list from J-Link Commander",
+                remediation="Run get_probe_information for the selected probe.",
+            ),
+            DependencyCheck(
+                name="container-non-root",
+                ok=os.geteuid() != 0,
+                observed=f"uid={os.geteuid()}",
+                expected="non-root service user",
+            ),
+            DependencyCheck(
+                name="container-capabilities-dropped",
+                ok=_effective_capabilities() == 0,
+                observed=f"CapEff=0x{_effective_capabilities():x}",
+                expected="CapEff=0",
+            ),
+        ]
+        extension_checks = self.extensions.dependency_checks(
+            report.manifest,
+            existing_checks=[*report.checks, *runtime_checks],
         )
+        report.checks.extend(extension_checks)
+        report.checks.extend(runtime_checks)
         return report
 
     def resolve_selector(self, selector: DeviceSelector | None) -> DeviceSelector:

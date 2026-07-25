@@ -81,7 +81,13 @@ class ProtocolBridgeBackend:
             }
         )
         if secrets_to_send:
-            serial_result.parsed.pop("request_sha256", None)
+            for wire_hash in (
+                "request_sha256",
+                "request_body_sha256",
+                "response_sha256",
+                "response_body_sha256",
+            ):
+                serial_result.parsed.pop(wire_hash, None)
         else:
             body_sha256 = hashlib.sha256(body).hexdigest()
             serial_result.command.append(f"body-sha256:{body_sha256}")
@@ -114,16 +120,18 @@ class ProtocolBridgeBackend:
         }
         if secrets_to_send and sanitized_response.get("error"):
             sanitized_response["error"] = "bridge operation failed"
-        serial_result.parsed.update(
-            {
-                "wire_version": frames[0].wire_version,
-                "message_type": response_type.name.lower(),
-                "segments": len(frames),
-                "response_body_bytes": len(response_body),
-                "response_body_sha256": hashlib.sha256(response_body).hexdigest(),
-                "bridge": sanitized_response,
-            }
-        )
+        response_metadata = {
+            "wire_version": frames[0].wire_version,
+            "message_type": response_type.name.lower(),
+            "segments": len(frames),
+            "response_body_bytes": len(response_body),
+            "bridge": sanitized_response,
+        }
+        if not secrets_to_send:
+            response_metadata["response_body_sha256"] = hashlib.sha256(
+                response_body
+            ).hexdigest()
+        serial_result.parsed.update(response_metadata)
         if response_type == MessageType.ERROR or response["status"] != 0:
             serial_result.return_code = int(response["status"] or 1)
             serial_result.stderr = (

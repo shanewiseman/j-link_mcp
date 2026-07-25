@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
-from typing import Any
 
+from jlink_mcp_arduino_giga.models import DeviceSelector
 from mcp.types import ToolAnnotations
 
 from jlink_mcp.extensions import (
@@ -20,7 +19,6 @@ from jlink_mcp.models import (
     CapabilityState,
     DependencyCheck,
 )
-from jlink_mcp_arduino_giga.models import DeviceSelector
 
 from .backend import ProtocolBridgeBackend
 from .config import GigaProtocolBridgeConfig
@@ -38,7 +36,10 @@ from .models import (
     ProtocolBridgeStatus,
 )
 from .service import ProtocolBridgeService
-from .workflows import ProtocolBridgeWorkflows
+from .workflows import (
+    ProtocolBridgeWorkflows,
+    _release_checksums_authorize,
+)
 
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
@@ -63,9 +64,7 @@ class GigaProtocolBridgeExtension:
 
     def register(self, context: ExtensionContext) -> None:
         config = GigaProtocolBridgeConfig.model_validate(context.config)
-        giga_workflows = context.require_extension_service(
-            "arduino_giga", "workflows"
-        )
+        giga_workflows = context.require_extension_service("arduino_giga", "workflows")
         giga_config = context.require_extension_service("arduino_giga", "config")
         backend = ProtocolBridgeBackend(context.services.serial)
         service = ProtocolBridgeService(context.services.jlink, backend, config)
@@ -206,7 +205,11 @@ def _capabilities(manifest: CapabilityManifest) -> CapabilityContribution:
             ),
             "protocol_bridge": detail(
                 "protocol_bridge",
-                ["positive primary-core identity", "exclusive probe lease", "board serial"],
+                [
+                    "positive primary-core identity",
+                    "exclusive probe lease",
+                    "board serial",
+                ],
                 "Positive target identity and an accessible serial channel are required",
             ),
         },
@@ -235,7 +238,9 @@ def _capabilities(manifest: CapabilityManifest) -> CapabilityContribution:
     )
 
 
-def _dependencies(user_root: Path) -> list[DependencyCheck]:
+def _dependencies(
+    user_root: Path, *, firmware_root: Path | None = None
+) -> list[DependencyCheck]:
     libraries = {
         "Arduino_USBHostMbed5": "0.3.1",
         "ArduinoBLE": "2.1.0",
@@ -251,17 +256,14 @@ def _dependencies(user_root: Path) -> list[DependencyCheck]:
         )
         for name, version in libraries.items()
     ]
-    firmware_root = Path(__file__).parent / "firmware" / "protocol_bridge"
+    firmware_root = (
+        firmware_root or Path(__file__).parent / "firmware" / "protocol_bridge"
+    )
     release = firmware_root / "release"
     hex_path = release / "protocol_bridge_m7.hex"
     manifest_path = release / "protocol_bridge_manifest.json"
     checksum_path = release / "SHA256SUMS"
-    release_ok = all(path.is_file() for path in (hex_path, manifest_path, checksum_path))
-    if release_ok:
-        digest = hashlib.sha256(hex_path.read_bytes()).hexdigest()
-        release_ok = f"{digest}  {hex_path.name}" in checksum_path.read_text(
-            encoding="utf-8"
-        ).splitlines()
+    release_ok = _release_checksums_authorize(checksum_path, (hex_path, manifest_path))
     checks.append(
         DependencyCheck(
             name="protocol-bridge-release",

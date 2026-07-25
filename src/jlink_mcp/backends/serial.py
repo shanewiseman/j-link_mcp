@@ -7,6 +7,7 @@ import hashlib
 import json
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import serial
@@ -35,7 +36,7 @@ class SerialBackend:
 
         started = datetime.now(UTC)
         try:
-            raw = await asyncio.to_thread(
+            raw = await self._run_sync_to_completion(
                 self._exchange_sync,
                 port,
                 write,
@@ -93,7 +94,7 @@ class SerialBackend:
         request_sha256 = hashlib.sha256(write).hexdigest()
         started = datetime.now(UTC)
         try:
-            raw = await asyncio.to_thread(
+            raw = await self._run_sync_to_completion(
                 self._exchange_binary_sync,
                 port,
                 write,
@@ -133,6 +134,28 @@ class SerialBackend:
             },
         )
         return result, raw
+
+    @staticmethod
+    async def _run_sync_to_completion(
+        function: Callable[..., bytes], *args: object
+    ) -> bytes:
+        """Keep a cancelled caller attached until its serial worker has closed."""
+
+        worker = asyncio.create_task(asyncio.to_thread(function, *args))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            # asyncio.to_thread cannot stop a running thread. Waiting here keeps
+            # higher-level serialization locks held until the port context exits.
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+            if not worker.cancelled():
+                # Retrieve an exception so cancellation cannot leave task noise.
+                worker.exception()
+            raise
 
     @staticmethod
     def _exchange_sync(
@@ -180,6 +203,9 @@ class SerialBackend:
                 if chunk:
                     chunks.append(chunk)
                     last_data = time.monotonic()
-                elif last_data is not None and time.monotonic() - last_data >= idle_after_data:
+                elif (
+                    last_data is not None
+                    and time.monotonic() - last_data >= idle_after_data
+                ):
                     break
         return b"".join(chunks)

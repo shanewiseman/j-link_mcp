@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from conftest import make_result
 from pydantic import ValidationError
 
 from jlink_mcp.config import Settings, _first_existing
 from jlink_mcp.leases import ProbeBusy, ProbeLeaseManager
 from jlink_mcp.models import (
     Artifact,
-    CommandResult,
     DependencyCheck,
     DependencyReport,
     DeviceSelector,
@@ -27,10 +26,8 @@ from jlink_mcp.security import (
     validate_raw_command,
     validate_raw_commands,
 )
-from jlink_mcp.store import AuditStore, sha256_file
 from jlink_mcp.service import JLinkService
-
-from conftest import make_result
+from jlink_mcp.store import AuditStore, sha256_file
 
 
 def test_selector_and_result_contracts(manifest) -> None:
@@ -82,9 +79,7 @@ def test_selector_and_result_contracts(manifest) -> None:
 def test_extension_allowlist_accepts_compose_environment_syntax(monkeypatch) -> None:
     monkeypatch.setenv("JLINK_MCP_EXTENSIONS", "")
     assert Settings(_env_file=None).extensions == []
-    monkeypatch.setenv(
-        "JLINK_MCP_EXTENSIONS", "arduino_giga,giga_protocol_bridge"
-    )
+    monkeypatch.setenv("JLINK_MCP_EXTENSIONS", "arduino_giga,giga_protocol_bridge")
     assert Settings(_env_file=None).extensions == [
         "arduino_giga",
         "giga_protocol_bridge",
@@ -133,7 +128,9 @@ def test_artifact_and_profiles(tmp_path: Path, target_registry) -> None:
         target_registry.get_profile("unknown")
 
 
-def test_settings_token_and_path_confinement(settings: Settings, tmp_path: Path, monkeypatch) -> None:
+def test_settings_token_and_path_confinement(
+    settings: Settings, tmp_path: Path, monkeypatch
+) -> None:
     assert settings.bearer_token() == "test-token"
     settings.token = " inline "
     assert settings.bearer_token() == "inline"
@@ -258,6 +255,12 @@ async def test_exclusive_leases_and_stale_release() -> None:
     await manager.release(first.lease_id)
     async with manager.lease("probe", owner="third", timeout=0.1) as lease:
         assert lease.owner == "third"
+        nested_id = lease.lease_id
+        async with manager.lease("probe", owner="nested", timeout=0.1) as nested:
+            assert nested.lease_id == nested_id
+            assert nested.owner == "third"
+            assert len(manager.active_leases()) == 2
+        assert len(manager.active_leases()) == 2
     await manager.release(other.lease_id)
     assert not manager.active_leases()
 
@@ -300,9 +303,7 @@ def test_audit_hash_chain_sessions_and_verified_target(tmp_path: Path) -> None:
     stale = store.clear_stale_sessions()
     assert stale[0]["session_id"] == "s"
     assert store.clear_stale_sessions() == []
-    store.upsert_session(
-        session_id="s2", probe_serial="probe", backend="gdb", state={}
-    )
+    store.upsert_session(session_id="s2", probe_serial="probe", backend="gdb", state={})
     store.delete_session("s2")
     assert store.list_operations(limit=1)[0]["action"] == "connect"
 
@@ -326,4 +327,7 @@ def test_service_startup_audits_stale_session_recovery(settings: Settings) -> No
     service = JLinkService(settings)
     operation = service.store.list_operations(limit=1)[0]
     assert operation["action"] == "recover_stale_sessions"
-    assert operation["payload"]["result"]["parsed"]["recovered"][0]["session_id"] == "stale"
+    assert (
+        operation["payload"]["result"]["parsed"]["recovered"][0]["session_id"]
+        == "stale"
+    )

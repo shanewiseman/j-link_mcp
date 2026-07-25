@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import struct
+import threading
 import zlib
 from pathlib import Path
 
@@ -382,7 +383,12 @@ async def test_binary_serial_and_bridge_backend_never_log_payloads(monkeypatch) 
             request_sha256 = hashlib.sha256(kwargs["write"]).hexdigest()
             inherited = make_result(
                 backend="usb-serial",
-                parsed={"request_sha256": request_sha256},
+                parsed={
+                    "request_sha256": request_sha256,
+                    "request_body_sha256": "inherited-request-body-hash",
+                    "response_sha256": hashlib.sha256(response_stream).hexdigest(),
+                    "response_body_sha256": "inherited-response-body-hash",
+                },
             )
             inherited.command = [
                 "serial-binary",
@@ -404,11 +410,13 @@ async def test_binary_serial_and_bridge_backend_never_log_payloads(monkeypatch) 
 
     assert "request_sha256" not in bridge_result.parsed
     assert "request_body_sha256" not in bridge_result.parsed
+    assert "response_sha256" not in bridge_result.parsed
+    assert "response_body_sha256" not in bridge_result.parsed
     assert not any("sha256" in item for item in bridge_result.command)
     error_body = encode_tlvs(
         [
             (FieldId.STATUS, struct.pack("<H", 9)),
-            (FieldId.ERROR_MESSAGE, b"peer leaked a secret"),
+            (FieldId.ERROR_MESSAGE, b"request-secret"),
         ]
     )
     error_stream = encode_message(
@@ -417,14 +425,21 @@ async def test_binary_serial_and_bridge_backend_never_log_payloads(monkeypatch) 
 
     class ErrorSerial:
         async def exchange_binary(self, port, **kwargs):
-            return make_result(backend="usb-serial"), error_stream
+            return make_result(
+                backend="usb-serial",
+                parsed={"response_sha256": hashlib.sha256(error_stream).hexdigest()},
+            ), error_stream
 
     failed = await ProtocolBridgeBackend(ErrorSerial()).request(
-        "/dev/tty-test", {"operation": "get_status"}, secrets_to_send={"password": "x"}
+        "/dev/tty-test",
+        {"operation": "get_status"},
+        secrets_to_send={"password": "request-secret"},
     )
     assert not failed.ok
     assert failed.stderr == "bridge operation failed"
-    assert "peer leaked" not in failed.model_dump_json()
+    assert "request-secret" not in failed.model_dump_json()
+    assert "response_sha256" not in failed.parsed
+    assert "response_body_sha256" not in failed.parsed
 
 
 @pytest.mark.asyncio
@@ -461,6 +476,60 @@ async def test_bridge_backend_serializes_complete_exchange_per_port() -> None:
 
     assert first.ok and second.ok
     assert serial.max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_binary_exchange_holds_port_lock_until_worker_closes(
+    monkeypatch,
+) -> None:
+    serial = SerialBackend()
+    started = threading.Event()
+    release = threading.Event()
+    calls: list[int] = []
+
+    def exchange(
+        port: str,
+        write: bytes,
+        baudrate: int,
+        duration: float,
+        idle_after_data: float,
+    ) -> bytes:
+        del port, baudrate, duration, idle_after_data
+        frame = decode_stream(write)[0]
+        calls.append(frame.request_id)
+        started.set()
+        assert release.wait(timeout=2)
+        response = encode_tlvs(
+            [
+                (FieldId.STATUS, struct.pack("<H", 0)),
+                (FieldId.TIMESTAMP_US, struct.pack("<Q", 123)),
+            ]
+        )
+        return encode_message(
+            response,
+            message_type=MessageType.RESPONSE,
+            request_id=frame.request_id,
+        )
+
+    monkeypatch.setattr(serial, "_exchange_binary_sync", exchange)
+    backend = ProtocolBridgeBackend(serial)
+    first = asyncio.create_task(
+        backend.request("/dev/tty-shared", {"operation": "get_status"})
+    )
+    assert await asyncio.to_thread(started.wait, 1)
+
+    first.cancel()
+    second = asyncio.create_task(
+        backend.request("/dev/tty-shared", {"operation": "get_status"})
+    )
+    await asyncio.sleep(0.02)
+    assert len(calls) == 1
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert (await asyncio.wait_for(second, 1)).ok
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio

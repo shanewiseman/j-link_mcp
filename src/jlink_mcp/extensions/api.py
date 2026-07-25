@@ -152,9 +152,18 @@ class ExtensionRegistry:
         manifest.extensions = list(self.extension_infos)
         return manifest
 
-    def dependency_checks(self, manifest: CapabilityManifest) -> list[DependencyCheck]:
+    def dependency_checks(
+        self,
+        manifest: CapabilityManifest,
+        *,
+        existing_checks: Sequence[DependencyCheck] = (),
+    ) -> list[DependencyCheck]:
         checks: list[DependencyCheck] = []
         names: set[str] = set()
+        for check in existing_checks:
+            if check.name in names:
+                raise ExtensionError(f"duplicate core dependency check: {check.name}")
+            names.add(check.name)
         for extension_id, provider in self._dependency_providers:
             try:
                 contributed = provider(manifest)
@@ -165,9 +174,7 @@ class ExtensionRegistry:
             for raw in contributed:
                 check = DependencyCheck.model_validate(raw)
                 if check.name in names:
-                    raise ExtensionError(
-                        f"duplicate extension dependency check: {check.name}"
-                    )
+                    raise ExtensionError(f"duplicate dependency check: {check.name}")
                 names.add(check.name)
                 checks.append(check)
         return checks

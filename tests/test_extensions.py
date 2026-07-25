@@ -252,6 +252,12 @@ def test_profile_detector_tool_resource_capability_and_doctor_registration() -> 
     assert manifest.workflows["sample_workflow"] == CapabilityState.AVAILABLE
     assert registry.dependency_checks(manifest)[0].name == "sample-check"
 
+    with pytest.raises(ExtensionError, match="sample-check"):
+        registry.dependency_checks(
+            manifest,
+            existing_checks=[DependencyCheck(name="sample-check", ok=True)],
+        )
+
 
 @pytest.mark.parametrize(
     ("points", "enabled", "message"),
@@ -395,9 +401,7 @@ async def test_failed_load_rolls_back_inside_an_active_event_loop() -> None:
 
     def register_failing(context) -> None:
         context.register_tool(lambda: None, name="partial_tool")
-        context.register_resource(
-            "partial://resource", lambda: None, name="partial"
-        )
+        context.register_resource("partial://resource", lambda: None, name="partial")
         raise RuntimeError("active-loop registration failed")
 
     failing = FakeExtension("failing", events, register=register_failing)

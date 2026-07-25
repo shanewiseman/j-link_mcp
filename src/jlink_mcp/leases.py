@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import AsyncIterator
 
 
 @dataclass(slots=True)
@@ -27,6 +27,7 @@ class ProbeLeaseManager:
         self._locks: dict[str, asyncio.Lock] = {}
         self._active: dict[str, LeaseInfo] = {}
         self._by_id: dict[str, LeaseInfo] = {}
+        self._lease_tasks: dict[str, object | None] = {}
         self._guard = asyncio.Lock()
 
     async def _lock_for(self, probe_serial: str) -> asyncio.Lock:
@@ -41,6 +42,13 @@ class ProbeLeaseManager:
         owner: str,
         timeout: float = 30.0,
     ) -> AsyncIterator[LeaseInfo]:
+        active = self._active.get(probe_serial)
+        if (
+            active is not None
+            and self._lease_tasks.get(active.lease_id) is asyncio.current_task()
+        ):
+            yield active
+            return
         info = await self.acquire(probe_serial, owner=owner, timeout=timeout)
         try:
             yield info
@@ -62,9 +70,7 @@ class ProbeLeaseManager:
         except TimeoutError as exc:
             active = self._active.get(probe_serial)
             holder = active.owner if active else "unknown"
-            raise ProbeBusy(
-                f"probe {probe_serial} is leased by {holder}"
-            ) from exc
+            raise ProbeBusy(f"probe {probe_serial} is leased by {holder}") from exc
         info = LeaseInfo(
             lease_id=str(uuid.uuid4()),
             probe_serial=probe_serial,
@@ -73,6 +79,7 @@ class ProbeLeaseManager:
         )
         self._active[probe_serial] = info
         self._by_id[info.lease_id] = info
+        self._lease_tasks[info.lease_id] = asyncio.current_task()
         return info
 
     async def release(self, lease_id: str) -> None:
@@ -80,6 +87,7 @@ class ProbeLeaseManager:
 
         async with self._guard:
             info = self._by_id.pop(lease_id, None)
+            self._lease_tasks.pop(lease_id, None)
             if not info:
                 return
             self._active.pop(info.probe_serial, None)

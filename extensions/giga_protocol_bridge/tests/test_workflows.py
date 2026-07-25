@@ -114,11 +114,13 @@ async def test_deploy_requires_backup_before_flash(
         "source_sha256": source_sha,
         "hex": {"sha256": hex_sha},
     }
-    (release / "protocol_bridge_manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    manifest_path = release / "protocol_bridge_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     (release / "SHA256SUMS").write_text(
-        f"{hex_sha}  protocol_bridge_m7.hex\n", encoding="utf-8"
+        f"{hex_sha}  protocol_bridge_m7.hex\n"
+        f"{manifest_sha}  protocol_bridge_manifest.json\n",
+        encoding="utf-8",
     )
     monkeypatch.setattr(workflow, "_firmware_root", lambda: source)
     backup_path = workflow.settings.state_root / "artifacts" / "original.bin"
@@ -129,23 +131,34 @@ async def test_deploy_requires_backup_before_flash(
         sha256=hashlib.sha256(backup_path.read_bytes()).hexdigest(),
     )
     events: list[str] = []
+    lease_ids: list[str] = []
+
+    def record_lease() -> None:
+        active = workflow.service.leases.active_leases()
+        assert len(active) == 1
+        assert active[0].owner == "deploy_protocol_bridge"
+        lease_ids.append(active[0].lease_id)
 
     async def resolve(value):
         return selector()
 
     async def preflight(**kwargs):
+        assert not workflow.service.leases.active_leases()
         events.append(f"preflight:{kwargs.get('prepare_dual_core')}")
         return {"ok": True}
 
     async def backup_flash(address, size, **kwargs):
+        record_lease()
         events.append(f"backup:{address:#x}:{size:#x}")
         return make_result(), backup
 
     async def flash(path, **kwargs):
+        record_lease()
         events.append(f"flash:{Path(path).name}")
         return make_result(parsed={"flash_verified": True})
 
     async def status(**kwargs):
+        record_lease()
         events.append("handshake")
         return ProtocolBridgeStatus(
             firmware_version="1.0.0",
@@ -171,14 +184,19 @@ async def test_deploy_requires_backup_before_flash(
         "flash:protocol_bridge_m7.hex",
         "handshake",
     ]
+    assert len(set(lease_ids)) == 1
+    assert not workflow.service.leases.active_leases()
+    lease_ids.clear()
 
     async def restore_backup(path, address, expected_sha256, **kwargs):
         events.append(f"restore:{address:#x}:{Path(path).name}")
+        record_lease()
         assert expected_sha256 == backup.sha256
         return {"ok": True, "backup_sha256": expected_sha256}
 
     async def failed_flash(path, **kwargs):
         events.append(f"flash-failed:{Path(path).name}")
+        record_lease()
         return make_result(return_code=1)
 
     monkeypatch.setattr(workflow.giga_workflows, "restore_backup", restore_backup)
@@ -199,7 +217,12 @@ async def test_deploy_requires_backup_before_flash(
         "restore:0x8000000:original.bin",
     ]
 
+    assert len(set(lease_ids)) == 1
+    assert not workflow.service.leases.active_leases()
+    lease_ids.clear()
+
     async def mismatched_status(**kwargs):
+        record_lease()
         events.append("handshake-mismatch")
         return ProtocolBridgeStatus(
             firmware_version="wrong",
@@ -213,6 +236,7 @@ async def test_deploy_requires_backup_before_flash(
         )
 
     async def failed_restore(*args, **kwargs):
+        record_lease()
         events.append("restore-failed")
         raise RuntimeError("probe disconnected during recovery")
 
@@ -233,8 +257,12 @@ async def test_deploy_requires_backup_before_flash(
         "handshake-mismatch",
         "restore-failed",
     ]
+    assert len(set(lease_ids)) == 1
+    assert not workflow.service.leases.active_leases()
+    lease_ids.clear()
 
     async def failed_backup(*args, **kwargs):
+        record_lease()
         events.append("backup-failed")
         return make_result(return_code=1), None
 
@@ -243,3 +271,5 @@ async def test_deploy_requires_backup_before_flash(
     with pytest.raises(RuntimeError, match="requires a readable flash backup"):
         await workflow.deploy_protocol_bridge(selector=selector())
     assert events == ["preflight:True", "backup-failed"]
+    assert len(set(lease_ids)) == 1
+    assert not workflow.service.leases.active_leases()
