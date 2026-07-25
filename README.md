@@ -49,6 +49,24 @@ uv sync --frozen --package jlink-mcp --extra test --extra gui
 Start every hardware session with `dependency_doctor` and `get_capabilities`.
 Use stable probe/board serials and retain operation IDs as evidence.
 
+### Connected GIGA demonstration
+
+With the maintained GIGA deployment running, use this demonstration to prove
+that MCP, J-Link Commander, the attached probe, and both STM32H747 cores can be
+identified:
+
+```sh
+.venv/bin/python examples/giga_connection_demo.py
+```
+
+The example does not erase, program, or write firmware. It runs the required
+doctor and capability checks, resolves the unique probe/board pair to stable
+serial selectors, enumerates the J-Link, and validates GIGA voltage, DPIDR,
+M7/M4 CPUID values, and an option/register snapshot. If the M4 is boot-held,
+the preflight transiently releases it through `RCC_GCR.BOOT_C2`; it does not
+change persistent boot, option, protection, or firmware state. Successful
+output includes operation IDs for the corresponding audit evidence.
+
 ## Extension activation
 
 Only comma-separated IDs in `JLINK_MCP_EXTENSIONS` load. An optional

@@ -21,22 +21,25 @@ from pydantic import (
 from jlink_mcp.models import (
     Artifact,
     CommandResult,
-    DeviceSelector as CoreDeviceSelector,
     utc_now,
+)
+from jlink_mcp.models import (
+    DeviceSelector as CoreDeviceSelector,
 )
 
 MAX_BRIDGE_PAYLOAD = 64 * 1024
 MAX_APPLICATION_PAYLOAD = 64_000
 MAX_TRANSPORT_FRAME = 4096
 BRIDGE_WIRE_VERSION = 1
-BRIDGE_FIRMWARE_VERSION = "1.0.0"
+BRIDGE_FIRMWARE_VERSION = "1.0.1"
 
 # Arduino labels exposed for unowned GPIO and caller-selected chip selects.
-# Fixed bus pins and D86-D102 (LED, USB host, radio, BOOT0, internal I2C) are
-# intentionally absent.
+# D8/D9 overlap bridge I2C bus 1, and D8 also overlaps CAN1 RX. D10 is the
+# conventional SPI1 chip select. Firmware resource ownership makes those uses
+# mutually exclusive. Other fixed bus pins and D86-D102 (LED, USB host, radio,
+# BOOT0, internal I2C) remain intentionally absent.
 SAFE_GPIO_PINS = tuple(
-    [f"D{pin}" for pin in range(2, 8)]
-    + [f"D{pin}" for pin in range(22, 86)]
+    [f"D{pin}" for pin in range(2, 11)] + [f"D{pin}" for pin in range(22, 86)]
 )
 _SAFE_GPIO_SET = frozenset(SAFE_GPIO_PINS)
 _PIN_RE = re.compile(r"^D([0-9]|[1-9][0-9]|10[0-2])$")
@@ -264,7 +267,7 @@ class GpioConfigureRequest(BridgeModel):
         return validate_safe_pin(value)
 
     @model_validator(mode="after")
-    def validate_configuration(self) -> "GpioConfigureRequest":
+    def validate_configuration(self) -> GpioConfigureRequest:
         if self.mode == GpioMode.OUTPUT and self.pull != GpioPull.NONE:
             raise ValueError("GPIO output does not accept a pull mode")
         if self.mode == GpioMode.INPUT and self.initial_value is not None:
@@ -322,7 +325,7 @@ class SpiExchangeRequest(PayloadRequest):
         return validate_safe_pin(value)
 
     @model_validator(mode="after")
-    def limit_clocks(self) -> "SpiExchangeRequest":
+    def limit_clocks(self) -> SpiExchangeRequest:
         write_size = len(decode_canonical_base64(self.data_base64))
         if max(write_size, self.read_length) > MAX_APPLICATION_PAYLOAD:
             raise ValueError("SPI transfer exceeds the 64,000-byte request limit")
@@ -336,10 +339,11 @@ class I2cExchangeRequest(PayloadRequest):
     read_length: int = Field(default=0, ge=0, le=32)
 
     @model_validator(mode="after")
-    def limit_i2c_transaction(self) -> "I2cExchangeRequest":
+    def limit_i2c_transaction(self) -> I2cExchangeRequest:
         if len(decode_canonical_base64(self.data_base64, maximum=32)) > 32:
             raise ValueError("I2C writes are limited to the 32-byte Wire buffer")
         return self
+
     repeated_start: bool = True
     clock_hz: Literal[100000, 400000] = 100000
 
@@ -356,7 +360,7 @@ class CanSendRequest(PayloadRequest):
     extended: bool = False
 
     @model_validator(mode="after")
-    def validate_can_frame(self) -> "CanSendRequest":
+    def validate_can_frame(self) -> CanSendRequest:
         payload = decode_canonical_base64(self.data_base64, maximum=8)
         if not self.extended and self.arbitration_id > 0x7FF:
             raise ValueError("standard CAN identifiers must be at most 0x7FF")
@@ -376,7 +380,7 @@ class UsbTransferRequest(PayloadRequest):
     index: int | None = Field(default=None, ge=0, le=0xFFFF)
 
     @model_validator(mode="after")
-    def validate_usb_transfer(self) -> "UsbTransferRequest":
+    def validate_usb_transfer(self) -> UsbTransferRequest:
         control_fields = (self.request_type, self.request, self.value, self.index)
         if self.transfer_type == UsbTransferType.CONTROL:
             if any(value is None for value in control_fields):

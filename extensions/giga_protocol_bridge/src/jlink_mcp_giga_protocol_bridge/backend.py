@@ -120,7 +120,11 @@ class ProtocolBridgeBackend:
             if response["status"]:
                 sanitized_response["error"] = "bridge operation failed"
         else:
-            sanitized_response = dict(response)
+            # CommandResult.parsed is persisted and serialized as JSON. Keep the
+            # canonical base64 field, never the duplicate arbitrary byte string.
+            sanitized_response = {
+                key: value for key, value in response.items() if key != "data"
+            }
         response_metadata = {
             "wire_version": frames[0].wire_version,
             "message_type": response_type.name.lower(),

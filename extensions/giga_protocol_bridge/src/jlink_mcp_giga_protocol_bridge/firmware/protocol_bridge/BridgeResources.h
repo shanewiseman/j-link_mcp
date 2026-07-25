@@ -16,7 +16,7 @@ enum Protocol : uint8_t {
 };
 
 inline bool safeDynamicPin(uint16_t pin) {
-  return (pin >= 2 && pin <= 7) || (pin >= 22 && pin <= 85);
+  return (pin >= 2 && pin <= 10) || (pin >= 22 && pin <= 85);
 }
 
 class PinResources {
@@ -27,6 +27,16 @@ class PinResources {
     if (!safeDynamicPin(pin) || owner == 0) return false;
     if (owners_[pin] != 0 && owners_[pin] != owner) return false;
     owners_[pin] = owner;
+    return true;
+  }
+
+  bool claimPair(uint16_t first, uint16_t second, uint8_t owner) {
+    if (!safeDynamicPin(first) || !safeDynamicPin(second) || owner == 0)
+      return false;
+    if ((owners_[first] != 0 && owners_[first] != owner) ||
+        (owners_[second] != 0 && owners_[second] != owner)) return false;
+    owners_[first] = owner;
+    owners_[second] = owner;
     return true;
   }
 

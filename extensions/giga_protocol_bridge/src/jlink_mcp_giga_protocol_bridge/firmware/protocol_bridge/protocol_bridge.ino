@@ -35,6 +35,8 @@ constexpr uint16_t kSelectionError = 5;
 constexpr uint16_t kResourceOwnerGpio = 1;
 constexpr uint16_t kResourceOwnerSpi0 = 2;
 constexpr uint16_t kResourceOwnerSpi1 = 3;
+constexpr uint16_t kResourceOwnerCan1 = 4;
+constexpr uint16_t kResourceOwnerI2c1 = 5;
 constexpr size_t kMaxApplicationTransfer = 64000;
 constexpr size_t kMaxMetadata = 4096;
 constexpr size_t kEncodedCapacity = kMaxDecodedFrame + kMaxDecodedFrame / 254 + 4;
@@ -393,6 +395,10 @@ void configureCan(const TlvReader& reader, uint32_t request_id) {
     sendError(request_id, kMalformed, "invalid classic CAN configuration");
     return;
   }
+  if (bus == 1 && !pin_resources.claim(8, kResourceOwnerCan1)) {
+    sendError(request_id, kConflict, "CAN1 RX pin D8 is already owned");
+    return;
+  }
   const bool ok = bus == 0 ? CAN.begin(canBitrate(bitrate))
                            : CAN1.begin(canBitrate(bitrate));
   if (!ok) {
@@ -462,6 +468,11 @@ void i2cExchange(const TlvReader& reader, uint32_t request_id) {
       !reader.getU8(REPEATED_START, repeated) || repeated > 1 ||
       !reader.bytes(DATA, write_data, write_length, false) || write_length > 32) {
     sendError(request_id, kMalformed, "invalid I2C transaction");
+    return;
+  }
+  if (bus == 1 && !pin_resources.claimPair(8, 9, kResourceOwnerI2c1)) {
+    sendError(request_id, kConflict,
+              "I2C bus 1 pins D8/D9 are already owned");
     return;
   }
   auto& wire = bus == 0 ? Wire : Wire2;  // Wire1 is reserved for ATECC608A.

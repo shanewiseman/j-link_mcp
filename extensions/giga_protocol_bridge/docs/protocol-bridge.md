@@ -25,6 +25,20 @@ prevents conflicting pin/peripheral use. Safe GPIO pins are enumerated by the
 extension; voltage levels, current limits, external CAN transceivers,
 termination, USB power, and wiring remain operator responsibilities.
 
+The bridge bus numbers map to the pinned Arduino GIGA platform as follows:
+
+| Bridge interface | GIGA pins |
+|---|---|
+| SPI bus 0 (`SPI`) | D90/MOSI, D89/MISO, D91/SCK; caller-owned safe CS |
+| SPI bus 1 (`SPI1`) | D11/MOSI, D12/MISO, D13/SCK; D10 is conventional CS |
+| I2C bus 0 (`Wire`) | D20/SDA, D21/SCL |
+| I2C bus 1 (`Wire2`) | D9/SDA, D8/SCL |
+
+`Wire1` is reserved for the onboard ATECC608A. D8/D9 may instead be claimed as
+GPIO, and D10 may be claimed as GPIO or an SPI chip select. These overlapping
+uses are mutually exclusive: resource ownership rejects I2C bus 1 or CAN1 when
+D8/D9 are GPIO-owned and rejects a conflicting use of D10 after SPI claims it.
+
 Wi-Fi and BLE are mutually exclusive. Secret profiles must be mode `0600` and
 are referenced through extension configuration; secrets are never returned.
 

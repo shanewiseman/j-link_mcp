@@ -115,6 +115,34 @@ class ProtocolBridgeWorkflows:
             digest.update(b"\0")
         return digest.hexdigest()
 
+    def _stage_authorized_release(self, source: Path, expected_sha256: str) -> Path:
+        """Copy a packaged release into the path-confined persistent state root."""
+
+        destination = (
+            self.settings.state_root
+            / "artifacts"
+            / "protocol-bridge-releases"
+            / expected_sha256
+            / source.name
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.is_file():
+            observed = hashlib.sha256(destination.read_bytes()).hexdigest()
+            if observed != expected_sha256:
+                raise ValueError("staged protocol bridge release hash mismatch")
+            return destination
+
+        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4()}.tmp")
+        try:
+            shutil.copyfile(source, temporary)
+            observed = hashlib.sha256(temporary.read_bytes()).hexdigest()
+            if observed != expected_sha256:
+                raise ValueError("staged protocol bridge release hash mismatch")
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return destination
+
     async def build_protocol_bridge_release(
         self,
         *,
@@ -336,6 +364,7 @@ class ProtocolBridgeWorkflows:
             raise ValueError(
                 "protocol bridge SHA256SUMS does not authorize the release"
             )
+        staged_hex = self._stage_authorized_release(hex_path, expected_hex)
 
         preflight = await self.giga_workflows.hardware_preflight(
             selector=resolved, prepare_dual_core=True
@@ -359,12 +388,12 @@ class ProtocolBridgeWorkflows:
                 )
             try:
                 flash = await self.giga_workflows.flash_and_verify(
-                    str(hex_path), selector=resolved
+                    str(staged_hex), selector=resolved
                 )
                 if not flash.ok:
                     raise RuntimeError("protocol bridge flashing failed")
                 firmware = registerable_artifact(
-                    hex_path, kind="protocol-bridge-release-hex"
+                    staged_hex, kind="protocol-bridge-release-hex"
                 )
                 firmware.metadata.update(manifest)
                 self.service.store.register_artifact(firmware)

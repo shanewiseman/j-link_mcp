@@ -9,7 +9,10 @@ from jlink_mcp_arduino_giga.profiles import GIGA_R1
 from jlink_mcp_arduino_giga.workflows import ArduinoGigaWorkflows
 from jlink_mcp_giga_protocol_bridge.backend import ProtocolBridgeBackend
 from jlink_mcp_giga_protocol_bridge.config import GigaProtocolBridgeConfig
-from jlink_mcp_giga_protocol_bridge.models import ProtocolBridgeStatus
+from jlink_mcp_giga_protocol_bridge.models import (
+    BRIDGE_FIRMWARE_VERSION,
+    ProtocolBridgeStatus,
+)
 from jlink_mcp_giga_protocol_bridge.service import ProtocolBridgeService
 from jlink_mcp_giga_protocol_bridge.workflows import (
     ProtocolBridgeDeployError,
@@ -110,7 +113,7 @@ async def test_deploy_requires_backup_before_flash(
     source_sha = workflow._protocol_bridge_source_sha256(source)
     hex_sha = hashlib.sha256(firmware.read_bytes()).hexdigest()
     manifest = {
-        "firmware_version": "1.0.0",
+        "firmware_version": BRIDGE_FIRMWARE_VERSION,
         "wire_version": 1,
         "source_sha256": source_sha,
         "hex": {"sha256": hex_sha},
@@ -133,6 +136,7 @@ async def test_deploy_requires_backup_before_flash(
     )
     events: list[str] = []
     lease_ids: list[str] = []
+    flashed_paths: list[Path] = []
 
     def record_lease() -> None:
         active = workflow.service.leases.active_leases()
@@ -155,6 +159,7 @@ async def test_deploy_requires_backup_before_flash(
 
     async def flash(path, **kwargs):
         record_lease()
+        flashed_paths.append(Path(path))
         events.append(f"flash:{Path(path).name}")
         return make_result(parsed={"flash_verified": True})
 
@@ -162,7 +167,7 @@ async def test_deploy_requires_backup_before_flash(
         record_lease()
         events.append("handshake")
         return ProtocolBridgeStatus(
-            firmware_version="1.0.0",
+            firmware_version=BRIDGE_FIRMWARE_VERSION,
             wire_version=1,
             build_id="fixture",
             source_sha256=source_sha,
@@ -185,6 +190,11 @@ async def test_deploy_requires_backup_before_flash(
         "flash:protocol_bridge_m7.hex",
         "handshake",
     ]
+    assert flashed_paths == [Path(deployed.firmware.path)]
+    assert workflow.settings.state_root in flashed_paths[0].parents
+    assert flashed_paths[0].read_bytes() == firmware.read_bytes()
+    assert hashlib.sha256(flashed_paths[0].read_bytes()).hexdigest() == hex_sha
+
     assert len(set(lease_ids)) == 1
     assert not workflow.service.leases.active_leases()
     lease_ids.clear()
@@ -203,6 +213,7 @@ async def test_deploy_requires_backup_before_flash(
     monkeypatch.setattr(workflow.giga_workflows, "restore_backup", restore_backup)
     monkeypatch.setattr(workflow.giga_workflows, "flash_and_verify", failed_flash)
     events.clear()
+    flashed_paths.clear()
     with pytest.raises(
         ProtocolBridgeDeployError, match="restoration verified"
     ) as caught:

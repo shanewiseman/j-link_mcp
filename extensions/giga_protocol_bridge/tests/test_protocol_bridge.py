@@ -70,7 +70,7 @@ def test_firmware_json_escapes_peer_controlled_ble_strings() -> None:
     assert "encodeJsonString(local_name.c_str()" in source
     assert "encodeJsonString(service.uuid()" in source
     assert "encodeJsonString(characteristic.uuid()" in source
-    assert '\\u00%02X' in source
+    assert "\\u00%02X" in source
 
 
 def test_contracts_reject_ambiguous_payloads_and_protected_pins() -> None:
@@ -79,8 +79,9 @@ def test_contracts_reject_ambiguous_payloads_and_protected_pins() -> None:
         with pytest.raises(ValueError, match="canonical"):
             decode_canonical_base64(invalid)
 
-    assert validate_safe_pin("d22") == "D22"
-    for pin in ("D8", "D21", "D86", "D101", "PA0"):
+    for pin in ("d8", "D9", "D10", "d22"):
+        assert validate_safe_pin(pin) == pin.upper()
+    for pin in ("D11", "D21", "D86", "D101", "PA0"):
         with pytest.raises(ValueError, match="protected"):
             validate_safe_pin(pin)
 
@@ -98,6 +99,11 @@ def test_protocol_specific_contract_bounds() -> None:
     SpiExchangeRequest(
         operation="spi_exchange", bus=0, chip_select="D22", data_base64=_b64(b"abc")
     )
+    display_spi = SpiExchangeRequest(
+        operation="spi_exchange", bus=1, chip_select="D10", data_base64=_b64(b"abc")
+    )
+    assert display_spi.bus == 1
+    assert display_spi.chip_select == "D10"
     with pytest.raises(ValidationError):
         SpiExchangeRequest(
             operation="spi_exchange",
@@ -329,7 +335,16 @@ def test_resource_claims_are_atomic_and_fail_closed() -> None:
     resources.claim("spi0", ["D22"])
     with pytest.raises(BridgeResourceConflict, match="spi0"):
         resources.claim("gpio", ["D22", "D23"])
-    assert resources.conflicts() == ["D22:spi0"]
+    resources.claim("display-gpio", ["D8", "D9"])
+    with pytest.raises(BridgeResourceConflict, match="display-gpio"):
+        resources.claim("i2c1", ["D8", "D9"])
+    assert resources.claim("spi1", ["D10"]).pins == ("D10",)
+    assert set(resources.conflicts()) == {
+        "D8:display-gpio",
+        "D9:display-gpio",
+        "D10:spi1",
+        "D22:spi0",
+    }
     with pytest.raises(ValueError, match="repeat"):
         resources.claim("gpio", ["D23", "D23"])
     resources.release("spi0")
@@ -471,6 +486,7 @@ async def test_bridge_backend_serializes_complete_exchange_per_port() -> None:
                 encode_tlvs(
                     [
                         (FieldId.STATUS, struct.pack("<H", 0)),
+                        (FieldId.RESPONSE_DATA, b"\xff"),
                         (FieldId.TIMESTAMP_US, struct.pack("<Q", 123)),
                     ]
                 ),
@@ -488,6 +504,10 @@ async def test_bridge_backend_serializes_complete_exchange_per_port() -> None:
 
     assert first.ok and second.ok
     assert serial.max_active == 1
+    assert first.parsed["bridge"]["data_base64"] == _b64(b"\xff")
+    assert "data" not in first.parsed["bridge"]
+    dumped = json.loads(first.model_dump_json())
+    assert dumped["parsed"]["bridge"]["data_base64"] == "/w=="
 
 
 @pytest.mark.asyncio
