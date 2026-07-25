@@ -20,4 +20,5 @@ mkdir -p sbom
   --with-urls \
   --order name \
   --output-file sbom/python-licenses.md
-echo "Generated sbom/jlink-mcp.cdx.json and sbom/python-licenses.md"
+.venv/bin/python -m json.tool sbom/arduino-libraries.cdx.json >/dev/null
+echo "Generated Python SBOM/licenses and validated sbom/arduino-libraries.cdx.json"

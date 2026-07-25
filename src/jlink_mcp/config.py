@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     mcp_path: str = "/mcp"
     token: str | None = None
     token_file: Path | None = None
+    bridge_profiles_file: Path | None = None
 
     repository_root: Path = Field(default_factory=lambda: Path.cwd().resolve())
     workspace_root: Path = Field(default_factory=lambda: Path.cwd().resolve())
@@ -56,6 +57,12 @@ class Settings(BaseSettings):
             str(Path.home() / ".arduino15"),
         )
     )
+    arduino_user_root: Path = Field(
+        default_factory=lambda: _first_existing(
+            "/opt/arduino/user",
+            str(Path.home() / "Arduino"),
+        )
+    )
     arm_gdb: str = Field(
         default_factory=lambda: shutil.which("arm-none-eabi-gdb")
         or "/home/swiseman/.arduino15/packages/arduino/tools/"
@@ -79,11 +86,13 @@ class Settings(BaseSettings):
         "host_dev_root",
         "sys_usb_root",
         "arduino_data_root",
+        "arduino_user_root",
+        "bridge_profiles_file",
         mode="before",
     )
     @classmethod
-    def expand_path(cls, value: str | Path) -> Path:
-        if value is None:
+    def expand_path(cls, value: str | Path | None) -> Path | None:
+        if value is None or value == "":
             return value
         return Path(value).expanduser()
 

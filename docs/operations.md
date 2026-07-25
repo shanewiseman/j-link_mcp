@@ -68,6 +68,21 @@ does not alter flash or option bytes.
 Use the stable selector returned by discovery for subsequent calls. Do not
 hard-code USB bus numbers or `/dev/ttyACM0`.
 
+## Protocol bridge operations
+
+Use `build_protocol_bridge_release` to regenerate the bridge bundle in managed
+state and compare its HEX with the checked-in release. `deploy_protocol_bridge`
+performs positive M7 identity checks, a mandatory complete flash backup,
+flash/verify/reset, and the version/source handshake. Retain its backup
+artifact until `restore_flash_backup` verifies the complete original hash.
+
+After deployment, call `get_protocol_bridge_status`, then typed
+`protocol_bridge_control`, `protocol_bridge_exchange`, and
+`protocol_bridge_receive` requests. Named Wi-Fi/BLE secrets require a
+container-visible mode-`0600` file selected by
+`JLINK_MCP_BRIDGE_PROFILES_FILE`. See [the protocol bridge guide](protocol-bridge.md)
+for wiring, roles, payload/queue formats, examples, and recovery.
+
 ## GUI diagnostics
 
 GUI programs run inside Xvfb. To inspect the isolated display through noVNC:
@@ -117,3 +132,8 @@ audits, backups, and restoration evidence; archive it first.
   rate at or below 4 MHz.
 - Snap `operation not permitted` at initial exec: use only the supplied snap
   overlay or migrate to standard Docker Engine.
+- Bridge profile rejected: verify the exact path is visible inside the
+  container, is a regular file, and has mode `0600`.
+- Bridge exchange timeout: confirm the checked-in firmware handshake, USB-C
+  control connection, stable board serial, selected M7 core, and the physical
+  companion wiring. Status cannot prove an external peripheral is present.

@@ -16,6 +16,12 @@ pytestmark = [
 @pytest.mark.asyncio
 async def test_installed_segger_gui_accessibility_screenshot_and_ocr(selector) -> None:
     async with session() as client:
+        doctor = unpack(await client.call_tool("dependency_doctor", {}))
+        assert not [
+            check["name"]
+            for check in doctor["checks"]
+            if check["required"] and not check["ok"]
+        ]
         capabilities = unpack(await client.call_tool("get_capabilities", {}))
         installed = {
             item["name"]

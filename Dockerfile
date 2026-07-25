@@ -4,6 +4,9 @@ FROM python:3.12-slim-bookworm
 
 ARG ARDUINO_CLI_VERSION=1.5.1
 ARG ARDUINO_CLI_SHA256=28a8e119c498a25607821c36cb2dc49e8463941b261a0d99091baa7bc692dd2b
+ARG ARDUINO_USB_HOST_MBED5_VERSION=0.3.1
+ARG ARDUINO_BLE_VERSION=2.1.0
+ARG ARDUINO_SPI_NINA_VERSION=0.0.2
 ARG UV_VERSION=0.8.15
 ARG APP_UID=1000
 ARG APP_GID=1000
@@ -67,6 +70,16 @@ RUN mkdir -p /opt/arduino/data /opt/arduino/downloads /opt/arduino/user \
     && arduino-cli core update-index --config-file /etc/arduino-cli.yaml \
     && arduino-cli core install arduino:mbed_giga@4.6.0 \
          --config-file /etc/arduino-cli.yaml \
+    && arduino-cli lib install \
+         "Arduino_USBHostMbed5@${ARDUINO_USB_HOST_MBED5_VERSION}" \
+         --config-file /etc/arduino-cli.yaml \
+    && arduino-cli lib install \
+         "Arduino_SpiNINA@${ARDUINO_SPI_NINA_VERSION}" \
+         --config-file /etc/arduino-cli.yaml \
+    && arduino-cli lib install \
+         "ArduinoBLE@${ARDUINO_BLE_VERSION}" \
+         --config-file /etc/arduino-cli.yaml \
+    && arduino-cli lib list --config-file /etc/arduino-cli.yaml \
     && arduino-cli core list --config-file /etc/arduino-cli.yaml
 
 WORKDIR /opt/jlink-mcp
@@ -93,6 +106,7 @@ ENV HOME=/segger-state \
     JLINK_MCP_HOST_DEV_ROOT=/host/dev \
     JLINK_MCP_SYS_USB_ROOT=/sys/bus/usb/devices \
     JLINK_MCP_ARDUINO_CLI=/usr/local/bin/arduino-cli \
+    JLINK_MCP_ARDUINO_USER_ROOT=/opt/arduino/user \
     JLINK_MCP_ARM_GDB=/opt/arduino/data/packages/arduino/tools/arm-none-eabi-gcc/7-2017q4/bin/arm-none-eabi-gdb \
     JLINK_MCP_TOKEN_FILE=/run/secrets/jlink_mcp_token \
     JLINK_MCP_HOST=127.0.0.1 \

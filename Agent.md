@@ -140,6 +140,27 @@ Engine retains the stronger base `no-new-privileges` setting.
 - Preserve existing user changes and ignored runtime evidence. Avoid broad
   cleanup, reset, checkout, or deletion commands.
 
+## Commit messages
+
+Every agent-authored commit must have a concise imperative subject, a blank
+line, and a detailed body. A subject line by itself is not an acceptable
+commit message, including for small changes.
+
+The body must accurately describe:
+
+- the problem or intended outcome and the major implementation areas changed;
+- important design, compatibility, security, generated-artifact, dependency,
+  or operational decisions;
+- the exact validation performed and its result, including hardware backup,
+  restore, hash, and operation evidence when applicable; and
+- remaining limitations, unavailable physical fixtures, skipped checks, or
+  follow-up work without presenting unverified behavior as complete.
+
+Write the message from the final staged diff, not from the original request or
+an earlier plan. Keep the subject useful in short history views and use the
+body to leave enough context for a future maintainer to understand what
+shipped and how it was proven without reconstructing the entire agent session.
+
 ## Hardware workflow
 
 Before a target-changing operation:

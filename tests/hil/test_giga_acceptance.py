@@ -42,6 +42,8 @@ async def test_complete_giga_acceptance_and_restore(selector) -> None:
         tools = await client.list_tools()
         names = {tool.name for tool in tools.tools}
         assert {
+            "dependency_doctor",
+            "get_capabilities",
             "hardware_preflight",
             "prepare_giga_dual_core_debug",
             "backup_flash",
@@ -53,6 +55,14 @@ async def test_complete_giga_acceptance_and_restore(selector) -> None:
             "swo_control",
             "restore_flash_backup",
         } <= names
+        doctor = unpack(await client.call_tool("dependency_doctor", {}))
+        assert not [
+            check["name"]
+            for check in doctor["checks"]
+            if check["required"] and not check["ok"]
+        ]
+        capabilities = unpack(await client.call_tool("get_capabilities", {}))
+        assert capabilities["workflows"]["flash_verify"] == "available"
 
         preflight = unpack(
             await client.call_tool(

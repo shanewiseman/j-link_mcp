@@ -280,6 +280,9 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
         "Probe capabilities are dynamically constrained by model, firmware, and licenses.",
         "Board identity inferred over USB must be confirmed by target MCU identity before writes.",
         "Direct J-Link SDK calls are unavailable until a licensed SDK is mounted.",
+        "Protocol-bridge exchanges are serialized and are not hard real-time operations.",
+        "Protocol-bridge payloads are opaque bytes represented as canonical base64 at the MCP boundary.",
+        "The GIGA Wi-Fi and BLE radios are mutually exclusive at runtime.",
     ]
     if probes and probes[0].usb.product_id == "1020":
         limitations.append(
@@ -368,6 +371,19 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
                 else CapabilityState.UNAVAILABLE
             ),
             "validation_report": CapabilityState.AVAILABLE,
+            "protocol_bridge_release": workflows["build_firmware"],
+            "protocol_bridge_deploy": (
+                CapabilityState.AVAILABLE
+                if workflows["flash_verify"] == CapabilityState.AVAILABLE
+                and workflows["serial"] == CapabilityState.AVAILABLE
+                else CapabilityState.UNAVAILABLE
+            ),
+            "protocol_bridge": (
+                CapabilityState.AVAILABLE
+                if workflows["flash_verify"] == CapabilityState.AVAILABLE
+                and workflows["serial"] == CapabilityState.AVAILABLE
+                else CapabilityState.UNAVAILABLE
+            ),
         }
     )
 
@@ -470,6 +486,21 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
             "validation_report": detail(
                 "validation_report", ["persistent state"], "Persistent state is unavailable"
             ),
+            "protocol_bridge_release": detail(
+                "protocol_bridge_release",
+                ["arduino-cli", "arduino:mbed_giga@4.6.0", "pinned bridge libraries"],
+                "The pinned Arduino build stack is unavailable",
+            ),
+            "protocol_bridge_deploy": detail(
+                "protocol_bridge_deploy",
+                ["JLinkExe", "GIGA USB CDC", "verified bridge release"],
+                "Commander, GIGA serial, and a verified bridge release are required",
+            ),
+            "protocol_bridge": detail(
+                "protocol_bridge",
+                ["positive M7 identity", "exclusive probe lease", "GIGA USB CDC"],
+                "Positive target identity and an accessible GIGA serial channel are required",
+            ),
         },
         features={
             "target_power": CapabilityAvailability(
@@ -515,6 +546,26 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
                     else "Probe SWO support is unavailable"
                 ),
             ),
+            **{
+                f"protocol_bridge_hil_{protocol}": CapabilityAvailability(
+                    state=CapabilityState.UNKNOWN,
+                    dependencies=[fixture],
+                    reason=(
+                        f"Physical {protocol.upper()} companion fixture presence and wiring "
+                        "cannot be inferred; prove it with the opt-in HIL acceptance suite"
+                    ),
+                )
+                for protocol, fixture in {
+                    "spi": "wired SPI responder and loopback fixture",
+                    "i2c": "wired I2C target fixture",
+                    "uart": "wired UART loopback or peer fixture",
+                    "can": "two terminated external CAN transceivers and CAN peer",
+                    "usb": "supported non-hub USB device on the host connector",
+                    "wifi": "reachable Wi-Fi profile and TCP/UDP peer",
+                    "ble": "reachable BLE peripheral fixture",
+                    "gpio": "wired GPIO loopback fixture",
+                }.items()
+            },
         },
         raw_surfaces=[
             "J-Link Commander command files",
@@ -534,6 +585,8 @@ def capability_manifest(settings: Settings) -> CapabilityManifest:
             "launch_segger_gui", "gui_session_info", "gui_keys", "gui_click",
             "gui_screenshot", "gui_ocr", "gui_accessibility_tree",
             "gui_image_match", "stop_segger_gui",
+            "get_protocol_bridge_status", "protocol_bridge_control",
+            "protocol_bridge_exchange", "protocol_bridge_receive",
         ],
         limitations=limitations,
         unique_pair=unique_pair,

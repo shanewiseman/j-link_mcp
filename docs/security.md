@@ -61,3 +61,12 @@ detects mutation; it is not a substitute for signing or off-host retention.
 Report suspected vulnerabilities privately to the repository owner. Rotate
 the token, stop the container, preserve `state/`, and verify the audit chain
 before restarting after an incident.
+
+Bridge Wi-Fi credentials and BLE passkeys are accepted only by name from the
+mode-`0600` `JLINK_MCP_BRIDGE_PROFILES_FILE`. Secret values are resolved only
+for the specific control request, omitted from command/result/error/audit and
+artifact serialization, and kept volatile in firmware. Opaque bridge payloads
+are represented as canonical base64 at the MCP boundary; binary serial audits
+record only sizes and SHA-256 hashes. The wire decoder rejects unknown or
+duplicate TLVs, invalid CRC/version/length values, and stale or out-of-order
+segments before dispatch.

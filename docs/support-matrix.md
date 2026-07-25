@@ -16,6 +16,10 @@
 | ETM trace | Not supported by EDU Mini | Explicitly unavailable |
 | Target power | Not supported by EDU Mini | GIGA requires separate USB power |
 | Serial | USB CDC correlated by Arduino serial | Fails closed on ambiguity or inaccessible node |
+| Protocol bridge | Versioned M7 firmware; SPI, I²C, UART, classic CAN, USB host, Wi-Fi station, BLE central, GPIO | Physical protocol capability remains unknown until its wired companion HIL passes |
+| Bridge wire | COBS/CRC-32/TLV; 4-KiB frames, 64-KiB assembly, 64,000-byte application payload | Unknown, duplicate, malformed, stale, or unsupported inputs fail closed |
+| CAN | Two classic CAN controllers with external transceivers and termination | CAN FD is not advertised |
+| Wireless | Wi-Fi client sockets or BLE central, one radio mode at a time | No raw 802.11, AP/server, persistent bonding, or BLE peripheral role |
 | GUI | Xvfb, AT-SPI, xdotool, OCR, OpenCV | Optional noVNC diagnostic profile |
 | Ozone/SystemView | Optional read-only mounts | Precise missing/unlicensed reason |
 | J-Link SDK | Adapter contract only | Disabled until separately licensed package is supplied |

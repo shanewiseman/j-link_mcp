@@ -156,6 +156,14 @@ def test_dependency_doctor_full_matrix(settings, manifest, monkeypatch, tmp_path
         path = platform_root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
+    for name, version in {
+        "Arduino_USBHostMbed5": "0.3.1",
+        "ArduinoBLE": "2.1.0",
+        "Arduino_SpiNINA": "0.0.2",
+    }.items():
+        properties = settings.arduino_user_root / "libraries" / name / "library.properties"
+        properties.parent.mkdir(parents=True, exist_ok=True)
+        properties.write_text(f"name={name}\nversion={version}\n", encoding="utf-8")
     monkeypatch.setattr(doctor, "capability_manifest", lambda settings: manifest)
     monkeypatch.setattr(doctor, "current_groups", lambda: {"plugdev", "dialout"})
     monkeypatch.setattr(doctor, "_filesystem_type", lambda path: "cgroup2fs")

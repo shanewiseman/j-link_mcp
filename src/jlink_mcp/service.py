@@ -17,9 +17,24 @@ from .backends import (
     CommanderBackend,
     GDBBackend,
     GUIBackend,
+    ProtocolBridgeBackend,
     SDKBackend,
     SerialBackend,
 )
+from .bridge_models import (
+    BRIDGE_WIRE_VERSION,
+    BlePairRequest,
+    BridgeProtocol,
+    ProtocolBridgeControlRequest,
+    ProtocolBridgeExchangeRequest,
+    ProtocolBridgeReceiveRequest,
+    ProtocolBridgeResult,
+    ProtocolBridgeStatus,
+    WifiConnectRequest,
+    decode_canonical_base64,
+    encode_canonical_base64,
+)
+from .bridge_profiles import load_bridge_profiles
 from .config import Settings
 from .discovery import capability_manifest
 from .doctor import dependency_report
@@ -86,6 +101,7 @@ class JLinkService:
         self.gui = GUIBackend(settings, self.runner)
         self.application = ApplicationBackend(settings, self.runner)
         self.serial = SerialBackend()
+        self.bridge = ProtocolBridgeBackend(self.serial)
         self.sdk = SDKBackend()
         self._gdb_leases: dict[str, str] = {}
         self._gdb_selectors: dict[str, DeviceSelector] = {}
@@ -975,6 +991,210 @@ class JLinkService:
             request={"write": write, "duration": duration, "until": until},
         )
         return result
+
+    async def _protocol_bridge_request(
+        self,
+        request: Any,
+        *,
+        selector: DeviceSelector | None,
+        action: str,
+        destructive: bool,
+        operation: str | None = None,
+        secrets_to_send: dict[str, str] | None = None,
+        timeout: float = 5.0,
+    ) -> CommandResult:
+        """Use the binary bridge only after the normal positive identity gate."""
+
+        resolved = await self.resolve_selector_wait(selector)
+        if resolved.core != TargetCore.M7:
+            raise ValueError("the protocol bridge control plane runs on the GIGA M7")
+        matching_gdb = next(
+            (
+                session_id
+                for session_id, active in self._gdb_selectors.items()
+                if active.probe_serial == resolved.probe_serial
+                and active.board_serial == resolved.board_serial
+                and active.core == resolved.core
+            ),
+            None,
+        )
+        identity_data: dict[str, Any]
+        resume_operation_id: str | None = None
+        if matching_gdb:
+            identity_data = self._gdb_identities[matching_gdb]
+            board = await self._wait_for_serial_board(resolved)
+            result = await self.bridge.request(
+                board.serial_port,
+                request,
+                operation=operation,
+                secrets_to_send=secrets_to_send,
+                timeout=timeout,
+            )
+            result.session_id = matching_gdb
+        else:
+            assert resolved.probe_serial is not None
+            async with self.leases.lease(
+                resolved.probe_serial,
+                owner=action,
+                timeout=max(timeout, self.settings.default_timeout_seconds),
+            ) as lease:
+                identity = await self._identity_preflight(resolved, lease.lease_id)
+                identity_data = identity.parsed
+                resume = await self._resume_after_identity_preflight(
+                    resolved,
+                    lease.lease_id,
+                    identity_data,
+                    action=f"{action}_resume",
+                )
+                resume_operation_id = resume.operation_id
+                board = await self._wait_for_serial_board(resolved)
+                result = await self.bridge.request(
+                    board.serial_port,
+                    request,
+                    operation=operation,
+                    secrets_to_send=secrets_to_send,
+                    timeout=timeout,
+                )
+                result.session_id = lease.lease_id
+        result.parsed["selector"] = resolved.model_dump(mode="json")
+        if resume_operation_id:
+            result.parsed["resume_operation_id"] = resume_operation_id
+        self._attach_identities(result, resolved, identity_data)
+        public_request = (
+            request.model_dump(mode="json", exclude_none=True)
+            if hasattr(request, "model_dump")
+            else dict(request)
+        )
+        self.store.append_operation(
+            result=result,
+            action=action,
+            probe_serial=resolved.probe_serial,
+            destructive=destructive,
+            request={
+                "selector": resolved.model_dump(mode="json"),
+                "operation": operation,
+                "request": public_request,
+                "secret_profile_fields": sorted(secrets_to_send or {}),
+            },
+        )
+        return result
+
+    @staticmethod
+    def _bridge_response(result: CommandResult) -> dict[str, Any]:
+        if not result.ok:
+            raise RuntimeError(result.stderr or "protocol bridge request failed")
+        response = result.parsed.get("bridge")
+        if not isinstance(response, dict):
+            raise RuntimeError("protocol bridge returned no structured response")
+        return response
+
+    async def protocol_bridge_status(
+        self, *, selector: DeviceSelector | None = None
+    ) -> ProtocolBridgeStatus:
+        result = await self._protocol_bridge_request(
+            {},
+            selector=selector,
+            action="protocol_bridge_status",
+            destructive=False,
+            operation="get_status",
+        )
+        response = self._bridge_response(result)
+        metadata = response.get("metadata", {})
+        if metadata.get("wire_version") != BRIDGE_WIRE_VERSION:
+            raise RuntimeError("protocol bridge wire-version handshake failed")
+        return ProtocolBridgeStatus.model_validate({**metadata, "command": result})
+
+    async def protocol_bridge_control(
+        self,
+        request: ProtocolBridgeControlRequest,
+        *,
+        selector: DeviceSelector | None = None,
+    ) -> ProtocolBridgeResult:
+        secrets_to_send: dict[str, str] = {}
+        if isinstance(request, WifiConnectRequest):
+            profiles = load_bridge_profiles(self.settings.bridge_profiles_file)
+            try:
+                profile = profiles.wifi[request.profile]
+            except KeyError as exc:
+                raise ValueError(f"unknown Wi-Fi credential profile: {request.profile}") from exc
+            secrets_to_send = {
+                "ssid": profile.ssid.get_secret_value(),
+                "password": profile.password.get_secret_value(),
+            }
+        elif isinstance(request, BlePairRequest) and request.passkey_profile:
+            profiles = load_bridge_profiles(self.settings.bridge_profiles_file)
+            try:
+                profile = profiles.ble_passkeys[request.passkey_profile]
+            except KeyError as exc:
+                raise ValueError(
+                    f"unknown BLE passkey profile: {request.passkey_profile}"
+                ) from exc
+            secrets_to_send = {"passkey": profile.passkey.get_secret_value()}
+        result = await self._protocol_bridge_request(
+            request,
+            selector=selector,
+            action=f"protocol_bridge_control:{request.operation}",
+            destructive=True,
+            secrets_to_send=secrets_to_send or None,
+            timeout=35.0 if request.operation in {"wifi_connect", "ble_scan", "ble_connect"} else 5.0,
+        )
+        return self._bridge_result(request.operation, result)
+
+    async def protocol_bridge_exchange(
+        self,
+        request: ProtocolBridgeExchangeRequest,
+        *,
+        selector: DeviceSelector | None = None,
+    ) -> ProtocolBridgeResult:
+        result = await self._protocol_bridge_request(
+            request,
+            selector=selector,
+            action=f"protocol_bridge_exchange:{request.operation}",
+            destructive=True,
+            timeout=30.0,
+        )
+        return self._bridge_result(request.operation, result)
+
+    async def protocol_bridge_receive(
+        self,
+        request: ProtocolBridgeReceiveRequest,
+        *,
+        selector: DeviceSelector | None = None,
+    ) -> ProtocolBridgeResult:
+        result = await self._protocol_bridge_request(
+            request,
+            selector=selector,
+            action=f"protocol_bridge_receive:{request.protocol}",
+            destructive=request.drain,
+            operation="receive",
+            timeout=max(5.0, request.timeout_ms / 1000 + 2.0),
+        )
+        return self._bridge_result(f"{request.protocol}_receive", result)
+
+    @staticmethod
+    def _bridge_result(operation: str, result: CommandResult) -> ProtocolBridgeResult:
+        response = JLinkService._bridge_response(result)
+        data = decode_canonical_base64(response.get("data_base64", ""))
+        protocol_name = operation.split("_", 1)[0]
+        if protocol_name not in {item.value for item in BridgeProtocol}:
+            protocol_name = "usb" if operation.startswith("usb_") else "gpio"
+        metadata = dict(response.get("metadata", {}))
+        if response.get("queue_depth"):
+            metadata["queue_depth"] = response["queue_depth"]
+        if response.get("overflow_count"):
+            metadata["overflow_count"] = response["overflow_count"]
+        return ProtocolBridgeResult(
+            protocol=BridgeProtocol(protocol_name),
+            operation=operation,
+            data_base64=encode_canonical_base64(data),
+            byte_count=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+            hex_preview=data[:64].hex(),
+            metadata=metadata,
+            timestamp=datetime.now(UTC),
+            overflow=bool(response.get("overflow_count")),
+            command=result,
+        )
 
     async def start_gdb(
         self,

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import copy
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
 import jlink_mcp.service as service_module
 from jlink_mcp.models import DependencyReport, DeviceSelector, TargetCore
+from jlink_mcp.bridge_models import WifiConnectRequest
 from jlink_mcp.service import JLinkService, TargetSelectionError
 
 from conftest import make_result
@@ -226,6 +228,92 @@ async def test_serial_waits_for_post_identity_usb_renumeration(
         "ready:/dev/ttyACM0",
         "exchange:/dev/ttyACM0",
     ]
+
+
+@pytest.mark.asyncio
+async def test_protocol_bridge_identity_handshake_and_secret_audit(
+    service, monkeypatch, tmp_path
+) -> None:
+    events: list[str] = []
+
+    async def preflight(resolved, lease_id):
+        events.append(f"identity:{resolved.core.value}")
+        result = identity(resolved.core)
+        result.session_id = lease_id
+        return result
+
+    async def bridge_request(port, request, **kwargs):
+        events.append(f"bridge:{port}:{kwargs.get('operation') or request.operation}")
+        if kwargs.get("operation") == "get_status":
+            return make_result(
+                backend="giga-protocol-bridge",
+                parsed={
+                    "bridge": {
+                        "status": 0,
+                        "data_base64": "",
+                        "metadata": {
+                            "firmware_version": "1.0.0",
+                            "wire_version": 1,
+                            "build_id": "fixture",
+                            "source_sha256": "a" * 64,
+                            "supported_interfaces": ["spi", "i2c", "uart", "can", "usb", "wifi", "ble", "gpio"],
+                            "safe_pins": ["D22"],
+                            "transfer_limits": {"application_payload": 64000},
+                            "connections": {},
+                            "queue_depths": {},
+                            "overflow_counts": {},
+                            "active_resource_conflicts": [],
+                        },
+                    }
+                },
+            )
+        assert kwargs["secrets_to_send"] == {
+            "ssid": "fixture-net",
+            "password": "secret123",
+        }
+        return make_result(
+            backend="giga-protocol-bridge",
+            parsed={
+                "bridge": {
+                    "status": 0,
+                    "data_base64": "",
+                    "metadata": {"connected": True},
+                }
+            },
+        )
+
+    profiles = tmp_path / "bridge-profiles.json"
+    profiles.write_text(
+        json.dumps(
+            {"wifi": {"lab": {"ssid": "fixture-net", "password": "secret123"}}}
+        ),
+        encoding="utf-8",
+    )
+    profiles.chmod(0o600)
+    service.settings.bridge_profiles_file = profiles
+    monkeypatch.setattr(service, "_identity_preflight", preflight)
+    monkeypatch.setattr(service.bridge, "request", bridge_request)
+
+    status = await service.protocol_bridge_status(selector=selector())
+    assert status.wire_version == 1 and status.firmware_version == "1.0.0"
+    connected = await service.protocol_bridge_control(
+        WifiConnectRequest(operation="wifi_connect", profile="lab"),
+        selector=selector(),
+    )
+    assert connected.protocol == "wifi"
+    assert events == [
+        "identity:m7",
+        "bridge:/dev/ttyACM0:get_status",
+        "identity:m7",
+        "bridge:/dev/ttyACM0:wifi_connect",
+    ]
+    audit = json.dumps(service.store.list_operations(limit=20), sort_keys=True)
+    assert "fixture-net" not in audit and "secret123" not in audit
+    assert '"profile": "lab"' in audit
+    assert service.store.verify_chain() == (True, None)
+
+    with pytest.raises(ValueError, match="runs on the GIGA M7"):
+        await service.protocol_bridge_status(selector=selector(TargetCore.M4))
 
 
 def test_identity_gate_all_failure_reasons(service) -> None:

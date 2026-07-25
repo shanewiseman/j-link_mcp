@@ -8,6 +8,13 @@ The authoritative machine-readable inventory is
 package table is [`sbom/python-licenses.md`](sbom/python-licenses.md). Regenerate
 both with `scripts/generate-sbom.sh` after dependency changes.
 
+The protocol-bridge Arduino library inventory is
+[`sbom/arduino-libraries.cdx.json`](sbom/arduino-libraries.cdx.json):
+`Arduino_USBHostMbed5@0.3.1` (Apache-2.0), `ArduinoBLE@2.1.0`
+(LGPL-2.1-only), and its explicitly pinned `Arduino_SpiNINA@0.0.2` dependency
+(MPL-2.0). Their upstream license files are installed by Arduino CLI in the
+container; they are not copied into this repository.
+
 Runtime Python dependencies include the MCP Python SDK (MIT), HTTPX (BSD),
 Pydantic and pydantic-settings (MIT), pyudev (LGPL-2.1+), pyserial (BSD),
 pyelftools (public domain), pygdbmi (MIT), psutil (BSD-3-Clause), Uvicorn

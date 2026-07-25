@@ -28,6 +28,9 @@ checks.
 - **Dual-core GIGA support.** Build and deploy independent M7/M4 images,
   transiently release a boot-held M4, validate shared behavior, and debug each
   core with its correct target identity.
+- **Universal GIGA protocol bridge.** Deploy a versioned M7 image and exchange
+  opaque bytes through SPI, I²C, four UARTs, classic CAN, USB host, Wi-Fi,
+  BLE central, and protected GPIO using typed, bounded MCP requests.
 - **Managed debug and observability.** Exclusive GDB sessions, GDB/MI,
   breakpoints, watchpoints, registers, memory, stack/backtrace capture, RTT,
   semihosting, USB serial, and optional SWO/ITM.
@@ -79,6 +82,7 @@ It does **not** include SEGGER binaries, firmware, SDK files, or manuals.
 | Target | Arduino GIGA R1 WiFi, STM32H747XI M7 and M4 |
 | Target interface | SWD; optional SWO wire |
 | Arduino platform | Arduino CLI 1.5.1 and `arduino:mbed_giga@4.6.0` |
+| Bridge libraries | `Arduino_USBHostMbed5@0.3.1`, `ArduinoBLE@2.1.0`, `Arduino_SpiNINA@0.0.2` |
 | Firmware inputs | ELF, Intel HEX, and explicit-address BIN |
 | MCP transport | Token-protected loopback Streamable HTTP; stdio bridge available |
 
@@ -216,12 +220,19 @@ return precise remediation for anything unavailable.
 | Back up or restore flash with hash authorization | `backup_flash`, `restore_flash_backup` |
 | Run the repository's complete fixture workflow | `validate_giga_fixture` |
 | Export the evidence record | `generate_validation_report` |
+| Rebuild/verify the checked-in bridge HEX | `build_protocol_bridge_release` |
+| Back up, deploy, and handshake the bridge | `deploy_protocol_bridge` |
+| Inspect/configure/exchange/receive | `get_protocol_bridge_status`, `protocol_bridge_control`, `protocol_bridge_exchange`, `protocol_bridge_receive` |
 
 Atomic tools are also available for probe discovery, connect/disconnect,
 reset/halt/run/step, memory and registers, breakpoints and watchpoints, erase
 and verify, USB serial, SWO, managed GDB sessions and channels, ELF inspection,
 SEGGER application execution, GUI automation, audit inspection, and audit-chain
 verification.
+
+The universal bridge uses USB-C CDC as its control plane and USB-A for external
+host devices. See the [protocol bridge guide](docs/protocol-bridge.md) before
+wiring a peripheral, CAN transceiver, USB device, or GPIO loopback.
 
 Advanced operations use `raw_commander`, `raw_jlink_command_string`,
 `gdb_command`, and `run_segger_application`. These are deliberately not shell

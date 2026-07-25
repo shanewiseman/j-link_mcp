@@ -18,6 +18,12 @@ from .artifacts import (
     registerable_artifact,
     verify_fixture_elf,
 )
+from .bridge_models import (
+    BRIDGE_FIRMWARE_VERSION,
+    BRIDGE_WIRE_VERSION,
+    ProtocolBridgeDeployResult,
+    ProtocolBridgeReleaseResult,
+)
 from .models import (
     Artifact,
     BuildResult,
@@ -31,6 +37,8 @@ from .profiles import get_profile
 from .service import JLinkService
 
 _PROPERTY_RE = re.compile(r"^([^=\s]+)=(.*)$")
+_BRIDGE_RELEASE_EPOCH = 1784937600
+_BRIDGE_RELEASE_TIMESTAMP = "2026-07-25T00:00:00Z"
 
 
 class Workflows:
@@ -182,6 +190,270 @@ class Workflows:
             command=command,
             artifacts=artifacts,
             properties=properties,
+        )
+
+    @staticmethod
+    def _protocol_bridge_source_sha256(source: Path) -> str:
+        digest = hashlib.sha256()
+        for path in sorted(source.rglob("*")):
+            if not path.is_file() or "release" in path.relative_to(source).parts:
+                continue
+            if path.name == "BridgeBuildIdentity.generated.h":
+                continue
+            relative = path.relative_to(source).as_posix()
+            digest.update(relative.encode("utf-8") + b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    async def build_protocol_bridge_release(
+        self,
+        *,
+        verify_checked_in: bool = True,
+    ) -> ProtocolBridgeReleaseResult:
+        """Build a deterministic state bundle and compare its HEX byte-for-byte."""
+
+        source = self.settings.resolve_workspace_path("firmware/protocol_bridge")
+        source_sha256 = self._protocol_bridge_source_sha256(source)
+        build_root = (
+            self.settings.state_root
+            / "artifacts"
+            / "protocol-bridge-builds"
+            / f"{source_sha256[:16]}-{uuid.uuid4()}"
+        )
+        staged = build_root / "source" / "protocol_bridge"
+        output = build_root / "output"
+        bundle = build_root / "release"
+        shutil.copytree(source, staged, ignore=shutil.ignore_patterns("release"))
+        output.mkdir(parents=True)
+        bundle.mkdir(parents=True)
+        build_id = f"protocol-bridge-{BRIDGE_FIRMWARE_VERSION}-{source_sha256[:12]}"
+        (staged / "BridgeBuildIdentity.generated.h").write_text(
+            "#pragma once\n"
+            f'#define BRIDGE_FIRMWARE_VERSION "{BRIDGE_FIRMWARE_VERSION}"\n'
+            f"#define BRIDGE_WIRE_VERSION {BRIDGE_WIRE_VERSION}\n"
+            f'#define BRIDGE_BUILD_ID "{build_id}"\n'
+            f'#define BRIDGE_BUILD_TIMESTAMP "{_BRIDGE_RELEASE_TIMESTAMP}"\n'
+            f'#define BRIDGE_SOURCE_SHA256 "{source_sha256}"\n',
+            encoding="utf-8",
+        )
+        command = await self.service.runner.run(
+            [
+                self.settings.arduino_cli,
+                "compile",
+                "--fqbn",
+                self.settings.fqbn,
+                "--board-options",
+                "target_core=cm7,split=75_25",
+                "--output-dir",
+                output,
+                "--export-binaries",
+                "--clean",
+                staged,
+            ],
+            backend="arduino-cli-protocol-bridge-release",
+            cwd=self.settings.workspace_root,
+            env={
+                "SOURCE_DATE_EPOCH": str(_BRIDGE_RELEASE_EPOCH),
+                "TZ": "UTC",
+                "LC_ALL": "C.UTF-8",
+            },
+            timeout=1200,
+        )
+        audit_request = {
+            "source": str(source),
+            "source_sha256": source_sha256,
+            "release_epoch": _BRIDGE_RELEASE_EPOCH,
+            "fqbn": self.settings.fqbn,
+            "board_options": "target_core=cm7,split=75_25",
+        }
+        artifacts: list[Artifact] = []
+        checked_in_hex = source / "release" / "protocol_bridge_m7.hex"
+        reproducible = False
+        if command.ok:
+            generated_hex = next(
+                (
+                    path
+                    for path in sorted(output.glob("*.hex"))
+                    if ".with_bootloader." not in path.name
+                ),
+                None,
+            )
+            if generated_hex is None:
+                raise RuntimeError(
+                    "Arduino build succeeded without an application-only HEX image"
+                )
+            release_hex = bundle / "protocol_bridge_m7.hex"
+            shutil.copy2(generated_hex, release_hex)
+            for path in sorted(output.iterdir()):
+                if ".with_bootloader." in path.name:
+                    continue
+                if path.is_file() and path.suffix.lower() in {
+                    ".elf",
+                    ".hex",
+                    ".bin",
+                    ".map",
+                }:
+                    artifact = registerable_artifact(
+                        path, kind=f"protocol-bridge-{path.suffix[1:].lower()}"
+                    )
+                    self.service.store.register_artifact(artifact)
+                    artifacts.append(artifact)
+            hex_artifact = registerable_artifact(
+                release_hex, kind="protocol-bridge-release-hex"
+            )
+            hex_artifact.metadata.update(
+                {
+                    "firmware_version": BRIDGE_FIRMWARE_VERSION,
+                    "wire_version": BRIDGE_WIRE_VERSION,
+                    "source_sha256": source_sha256,
+                    "build_id": build_id,
+                }
+            )
+            self.service.store.register_artifact(hex_artifact)
+            artifacts.append(hex_artifact)
+            manifest_path = bundle / "protocol_bridge_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "firmware_version": BRIDGE_FIRMWARE_VERSION,
+                        "wire_version": BRIDGE_WIRE_VERSION,
+                        "build_id": build_id,
+                        "build_timestamp": _BRIDGE_RELEASE_TIMESTAMP,
+                        "source_date_epoch": _BRIDGE_RELEASE_EPOCH,
+                        "source_sha256": source_sha256,
+                        "fqbn": self.settings.fqbn,
+                        "board_options": "target_core=cm7,split=75_25",
+                        "arduino_cli": "1.5.1",
+                        "arduino_core": "arduino:mbed_giga@4.6.0",
+                        "libraries": {
+                            "Arduino_USBHostMbed5": "0.3.1",
+                            "ArduinoBLE": "2.1.0",
+                            "Arduino_SpiNINA": "0.0.2",
+                        },
+                        "hex": {
+                            "filename": release_hex.name,
+                            "sha256": hex_artifact.sha256,
+                            "size": hex_artifact.size,
+                        },
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            manifest_artifact = registerable_artifact(
+                manifest_path, kind="protocol-bridge-release-manifest"
+            )
+            self.service.store.register_artifact(manifest_artifact)
+            artifacts.append(manifest_artifact)
+            checksums_path = bundle / "SHA256SUMS"
+            checksums_path.write_text(
+                f"{hex_artifact.sha256}  {release_hex.name}\n"
+                f"{manifest_artifact.sha256}  {manifest_path.name}\n",
+                encoding="utf-8",
+            )
+            checksums_artifact = registerable_artifact(
+                checksums_path, kind="protocol-bridge-release-checksums"
+            )
+            self.service.store.register_artifact(checksums_artifact)
+            artifacts.append(checksums_artifact)
+            reproducible = checked_in_hex.is_file() and (
+                checked_in_hex.read_bytes() == release_hex.read_bytes()
+            )
+            command.parsed.update(
+                {
+                    "source_sha256": source_sha256,
+                    "generated_hex": str(release_hex),
+                    "checked_in_hex": str(checked_in_hex),
+                    "reproducible": reproducible,
+                }
+            )
+            if verify_checked_in and not reproducible:
+                command.return_code = 1
+                command.stderr = (
+                    "generated protocol bridge HEX differs from the checked-in release"
+                )
+        self.service.store.append_operation(
+            result=command,
+            action="build_protocol_bridge_release",
+            probe_serial=None,
+            destructive=False,
+            request=audit_request,
+        )
+        return ProtocolBridgeReleaseResult(
+            source_sha256=source_sha256,
+            build_directory=str(build_root),
+            command=command,
+            artifacts=artifacts,
+            checked_in_hex=str(checked_in_hex),
+            reproducible=reproducible,
+        )
+
+    async def deploy_protocol_bridge(
+        self,
+        *,
+        selector: DeviceSelector | None = None,
+    ) -> ProtocolBridgeDeployResult:
+        """Back up all internal flash, deploy the release HEX, and handshake."""
+
+        resolved = await self.service.resolve_selector_wait(selector)
+        if resolved.core != TargetCore.M7:
+            raise ValueError("the protocol bridge firmware runs on the GIGA M7")
+        release = self.settings.resolve_workspace_path(
+            "firmware/protocol_bridge/release"
+        )
+        hex_path = release / "protocol_bridge_m7.hex"
+        manifest_path = release / "protocol_bridge_manifest.json"
+        checksums_path = release / "SHA256SUMS"
+        for path in (hex_path, manifest_path, checksums_path):
+            if not path.is_file():
+                raise FileNotFoundError(f"protocol bridge release file is missing: {path}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected_source = self._protocol_bridge_source_sha256(release.parent)
+        expected_hex = hashlib.sha256(hex_path.read_bytes()).hexdigest()
+        if manifest.get("source_sha256") != expected_source:
+            raise ValueError("protocol bridge release source hash is stale")
+        if manifest.get("hex", {}).get("sha256") != expected_hex:
+            raise ValueError("protocol bridge release HEX hash does not match its manifest")
+        checksum_lines = checksums_path.read_text(encoding="utf-8").splitlines()
+        if f"{expected_hex}  {hex_path.name}" not in checksum_lines:
+            raise ValueError("protocol bridge SHA256SUMS does not authorize the HEX")
+
+        preflight = await self.hardware_preflight(
+            selector=resolved, prepare_dual_core=True
+        )
+        if not preflight["ok"]:
+            raise RuntimeError("protocol bridge deployment stopped after failed preflight")
+        backup_result, backup = await self.backup_flash(
+            0x08000000, 0x200000, selector=resolved
+        )
+        if not backup_result.ok or backup is None:
+            raise RuntimeError("protocol bridge deployment requires a readable flash backup")
+        flash = await self.flash_and_verify(str(hex_path), selector=resolved)
+        if not flash.ok:
+            raise RuntimeError(
+                "protocol bridge flashing failed; retain and restore the returned backup"
+            )
+        firmware = registerable_artifact(hex_path, kind="protocol-bridge-release-hex")
+        firmware.metadata.update(manifest)
+        self.service.store.register_artifact(firmware)
+        handshake = await self.service.protocol_bridge_status(selector=resolved)
+        if (
+            handshake.firmware_version != manifest["firmware_version"]
+            or handshake.wire_version != manifest["wire_version"]
+            or handshake.source_sha256 != manifest["source_sha256"]
+        ):
+            raise RuntimeError("flashed protocol bridge identity does not match the release")
+        return ProtocolBridgeDeployResult(
+            selector=resolved,
+            preflight=preflight,
+            backup=backup,
+            firmware=firmware,
+            flash=flash,
+            handshake=handshake,
         )
 
     async def _build_identity(self) -> dict[str, str]:

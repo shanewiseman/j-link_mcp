@@ -24,6 +24,11 @@ def dependency_report(settings: Settings) -> DependencyReport:
         settings.arduino_data_root
         / "packages/arduino/hardware/mbed_giga/4.6.0"
     )
+    bridge_libraries = {
+        "Arduino_USBHostMbed5": "0.3.1",
+        "ArduinoBLE": "2.1.0",
+        "Arduino_SpiNINA": "0.0.2",
+    }
     checks = [
         DependencyCheck(
             name="linux",
@@ -123,6 +128,16 @@ def dependency_report(settings: Settings) -> DependencyReport:
             observed=str(platform_root),
             expected="arduino:mbed_giga@4.6.0",
         ),
+        *[
+            DependencyCheck(
+                name=f"arduino-library-{name.lower()}-{version}",
+                ok=_arduino_library_version(settings.arduino_user_root, name) == version,
+                observed=_arduino_library_version(settings.arduino_user_root, name),
+                expected=f"{name}@{version}",
+                remediation="Rebuild the pinned container image.",
+            )
+            for name, version in bridge_libraries.items()
+        ],
         DependencyCheck(
             name="giga-svd-m7",
             ok=(platform_root / "svd/STM32H747_CM7.svd").is_file(),
@@ -264,6 +279,18 @@ def _tool_path(tools: dict[str, object], name: str) -> str | None:
 def _tool_version(tools: dict[str, object], name: str) -> str | None:
     tool = tools.get(name)
     return getattr(tool, "version", None) if tool else None
+
+
+def _arduino_library_version(root: Path, name: str) -> str | None:
+    properties = root / "libraries" / name / "library.properties"
+    try:
+        for line in properties.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "version":
+                return value.strip()
+    except OSError:
+        return None
+    return None
 
 
 def _device_access_entries(manifest: object, settings: Settings) -> list[tuple[Path, str]]:

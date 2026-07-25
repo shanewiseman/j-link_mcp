@@ -36,6 +36,7 @@ services:
       - /run:rw,noexec,nosuid,nodev,size=32m,uid=${HOST_UID:-1000},gid=${HOST_GID:-1000}
     environment:
       JLINK_MCP_HOST: 127.0.0.1
+      JLINK_MCP_BRIDGE_PROFILES_FILE: "${JLINK_MCP_BRIDGE_PROFILES_FILE:-}"
       JLINK_MCP_TEST_TARGET_DISPOSABLE: "${TEST_TARGET_DISPOSABLE:-false}"
     restart: unless-stopped
     healthcheck:

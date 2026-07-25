@@ -11,6 +11,15 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from .config import Settings
+from .bridge_models import (
+    ProtocolBridgeControlRequest,
+    ProtocolBridgeDeployResult,
+    ProtocolBridgeExchangeRequest,
+    ProtocolBridgeReceiveRequest,
+    ProtocolBridgeReleaseResult,
+    ProtocolBridgeResult,
+    ProtocolBridgeStatus,
+)
 from .models import (
     BuildResult,
     CommandResult,
@@ -340,6 +349,44 @@ class MCPRuntime:
             )
 
         @mcp.tool(annotations=MUTATING)
+        async def deploy_protocol_bridge(
+            selector: DeviceSelector | None = None,
+        ) -> ProtocolBridgeDeployResult:
+            """Back up full GIGA flash, deploy the checked-in bridge HEX, and handshake."""
+            return await workflows.deploy_protocol_bridge(selector=selector)
+
+        @mcp.tool(annotations=READ_ONLY)
+        async def get_protocol_bridge_status(
+            selector: DeviceSelector | None = None,
+        ) -> ProtocolBridgeStatus:
+            """Read bridge identity, interfaces, ownership, connections, and queues."""
+            return await service.protocol_bridge_status(selector=selector)
+
+        @mcp.tool(annotations=MUTATING)
+        async def protocol_bridge_control(
+            request: ProtocolBridgeControlRequest,
+            selector: DeviceSelector | None = None,
+        ) -> ProtocolBridgeResult:
+            """Configure bridge transports, resources, devices, radios, and sockets."""
+            return await service.protocol_bridge_control(request, selector=selector)
+
+        @mcp.tool(annotations=MUTATING)
+        async def protocol_bridge_exchange(
+            request: ProtocolBridgeExchangeRequest,
+            selector: DeviceSelector | None = None,
+        ) -> ProtocolBridgeResult:
+            """Exchange opaque base64 payload bytes over one selected interface."""
+            return await service.protocol_bridge_exchange(request, selector=selector)
+
+        @mcp.tool(annotations=MUTATING)
+        async def protocol_bridge_receive(
+            request: ProtocolBridgeReceiveRequest,
+            selector: DeviceSelector | None = None,
+        ) -> ProtocolBridgeResult:
+            """Poll or drain queued UART, CAN, USB, Wi-Fi, BLE, or GPIO events."""
+            return await service.protocol_bridge_receive(request, selector=selector)
+
+        @mcp.tool(annotations=MUTATING)
         async def swo_control(
             action: str,
             speed_hz: int | None = None,
@@ -419,6 +466,15 @@ class MCPRuntime:
             """Compile a GIGA M7 or M4 sketch and register all artifacts."""
             return await workflows.build_firmware(
                 sketch_path, core=core, flash_split=flash_split, clean=clean
+            )
+
+        @mcp.tool(annotations=READ_ONLY)
+        async def build_protocol_bridge_release(
+            verify_checked_in: bool = True,
+        ) -> ProtocolBridgeReleaseResult:
+            """Build a deterministic state bundle and compare the checked-in HEX."""
+            return await workflows.build_protocol_bridge_release(
+                verify_checked_in=verify_checked_in
             )
 
         @mcp.tool(annotations=MUTATING)
