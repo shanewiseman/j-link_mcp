@@ -433,7 +433,7 @@ def test_failed_load_shuts_down_and_rolls_back_all_registrations() -> None:
     assert mcp.resources == {}
 
 
-@pytest.mark.parametrize("collision", ["capability", "dependency"])
+@pytest.mark.parametrize("collision", ["capability", "dependency", "atomic_tool"])
 def test_contribution_validation_collisions_roll_back(collision: str) -> None:
     events: list[str] = []
     registry = ExtensionRegistry()
@@ -450,7 +450,10 @@ def test_contribution_validation_collisions_roll_back(collision: str) -> None:
                     ]
                     if collision == "capability"
                     else []
-                )
+                ),
+                atomic_tools=(
+                    ["core-atomic-tool"] if collision == "atomic_tool" else []
+                ),
             )
         )
         context.register_dependency_provider(
@@ -477,6 +480,7 @@ def test_contribution_validation_collisions_roll_back(collision: str) -> None:
                         state=CapabilityState.AVAILABLE,
                     )
                 ],
+                atomic_tools=["core-atomic-tool"],
             )
         )
         registry.dependency_checks(
@@ -492,6 +496,51 @@ def test_contribution_validation_collisions_roll_back(collision: str) -> None:
     assert registry.extension_infos == []
     assert registry._capability_providers == []
     assert registry._dependency_providers == []
+
+
+def test_atomic_tool_collision_between_extensions_names_both_owners() -> None:
+    events: list[str] = []
+    registry = ExtensionRegistry()
+
+    def contribute(context) -> None:
+        context.register_capability_provider(
+            lambda manifest: CapabilityContribution(atomic_tools=["shared-tool"])
+        )
+
+    loaded = manager(
+        [
+            FakeExtension("first", events, register=contribute),
+            FakeExtension(
+                "second",
+                events,
+                dependencies=("first",),
+                register=contribute,
+            ),
+        ],
+        registry=registry,
+    )
+
+    with pytest.raises(
+        ExtensionError,
+        match=(
+            r"duplicate capability atomic tool: shared-tool "
+            r"\(extension second conflicts with extension first\)"
+        ),
+    ):
+        loaded.load(
+            validate=lambda: registry.merge_capabilities(
+                CapabilityManifest(host_os="test", host_arch="test")
+            )
+        )
+
+    assert events == [
+        "register:first:default",
+        "register:second:default",
+        "shutdown:second",
+        "shutdown:first",
+    ]
+    assert loaded.loaded_ids == []
+    assert registry._capability_providers == []
 
 
 @pytest.mark.asyncio

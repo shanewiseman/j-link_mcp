@@ -116,6 +116,11 @@ class ExtensionRegistry:
         workflow_names = set(manifest.workflows)
         detail_names = set(manifest.workflow_details)
         feature_names = set(manifest.features)
+        atomic_tool_owners: dict[str, str] = {}
+        for name in manifest.atomic_tools:
+            if name in atomic_tool_owners:
+                raise ExtensionError(f"duplicate core capability atomic tool: {name}")
+            atomic_tool_owners[name] = "the core capability manifest"
         for extension_id, provider in self._capability_providers:
             try:
                 contribution = CapabilityContribution.model_validate(provider(manifest))
@@ -148,7 +153,15 @@ class ExtensionRegistry:
             )
             manifest.limitations.extend(contribution.limitations)
             manifest.raw_surfaces.extend(contribution.raw_surfaces)
-            manifest.atomic_tools.extend(contribution.atomic_tools)
+            for name in contribution.atomic_tools:
+                previous_owner = atomic_tool_owners.get(name)
+                if previous_owner is not None:
+                    raise ExtensionError(
+                        f"duplicate capability atomic tool: {name} "
+                        f"(extension {extension_id} conflicts with {previous_owner})"
+                    )
+                atomic_tool_owners[name] = f"extension {extension_id}"
+                manifest.atomic_tools.append(name)
         manifest.extensions = list(self.extension_infos)
         return manifest
 
