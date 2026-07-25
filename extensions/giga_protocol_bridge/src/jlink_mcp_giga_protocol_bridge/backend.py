@@ -115,11 +115,12 @@ class ProtocolBridgeBackend:
                 "message": str(exc),
             }
             return serial_result
-        sanitized_response = {
-            key: value for key, value in response.items() if key != "data"
-        }
-        if secrets_to_send and sanitized_response.get("error"):
-            sanitized_response["error"] = "bridge operation failed"
+        if secrets_to_send:
+            sanitized_response = {"status": response["status"]}
+            if response["status"]:
+                sanitized_response["error"] = "bridge operation failed"
+        else:
+            sanitized_response = dict(response)
         response_metadata = {
             "wire_version": frames[0].wire_version,
             "message_type": response_type.name.lower(),

@@ -367,8 +367,8 @@ async def test_binary_serial_and_bridge_backend_never_log_payloads(monkeypatch) 
     response_body = encode_tlvs(
         [
             (FieldId.STATUS, struct.pack("<H", 0)),
-            (FieldId.RESPONSE_DATA, b"opaque-response"),
-            (FieldId.METADATA_JSON, b'{"fixture":true}'),
+            (FieldId.RESPONSE_DATA, b"request-secret"),
+            (FieldId.METADATA_JSON, b'{"echo":"request-secret"}'),
             (FieldId.TIMESTAMP_US, struct.pack("<Q", 123)),
         ]
     )
@@ -404,8 +404,7 @@ async def test_binary_serial_and_bridge_backend_never_log_payloads(monkeypatch) 
         secrets_to_send={"password": "request-secret"},
     )
     assert bridge_result.ok
-    assert bridge_result.parsed["bridge"]["data_base64"] == _b64(b"opaque-response")
-    assert "opaque-response" not in bridge_result.model_dump_json()
+    assert bridge_result.parsed["bridge"] == {"status": 0}
     assert "request-secret" not in bridge_result.model_dump_json()
 
     assert "request_sha256" not in bridge_result.parsed

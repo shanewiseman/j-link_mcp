@@ -3,12 +3,14 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from datetime import UTC, datetime
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 
 import pytest
 from conftest import make_result
 from pydantic import ValidationError
 
+import jlink_mcp
 from jlink_mcp.config import Settings, _first_existing
 from jlink_mcp.leases import ProbeBusy, ProbeLeaseManager
 from jlink_mcp.models import (
@@ -115,6 +117,10 @@ def test_repository_license_is_copyable_but_noncommercial() -> None:
     assert 'license = "PolyForm-Noncommercial-1.0.0"' in metadata
     assert "revenue-generating product, service, workflow, or business model" in readme
     assert "source-available, not OSI open source" in readme
+
+
+def test_public_version_matches_distribution_metadata() -> None:
+    assert jlink_mcp.__version__ == importlib_metadata.version("jlink-mcp")
 
 
 def test_artifact_and_profiles(tmp_path: Path, target_registry) -> None:
