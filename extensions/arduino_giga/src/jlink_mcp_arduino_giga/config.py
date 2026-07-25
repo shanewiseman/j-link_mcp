@@ -35,7 +35,6 @@ class ArduinoGigaConfig(BaseModel):
     )
     fqbn: str = "arduino:mbed_giga:giga"
     flash_split: str = "75_25"
-    test_target_disposable: bool = False
 
     @field_validator("data_root", "user_root", mode="before")
     @classmethod

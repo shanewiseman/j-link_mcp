@@ -94,6 +94,11 @@ def test_udev_policy_precedes_vendor_final_assignment() -> None:
     assert 'ATTR{idVendor}=="2341"' not in rules
     assert 'KERNEL=="ttyACM*"' not in rules
     assert "destination=/etc/udev/rules.d/59-jlink-mcp.rules" in installer
+    assert "legacy_destination=/etc/udev/rules.d/99-jlink-mcp.rules" in installer
+    assert 'sudo rm -f -- "$legacy_destination"' in installer
+    assert installer.index('sudo rm -f -- "$legacy_destination"') < installer.index(
+        'sudo install -o root -g root -m 0644 "$source_rule" "$destination"'
+    )
     assert "sudo -v" in installer
     assert 'if [ "$failed" -ne 0 ]' in installer
 

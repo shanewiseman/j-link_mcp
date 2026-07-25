@@ -2,15 +2,24 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
+from jlink_mcp_arduino_giga.extension import ArduinoGigaExtension
+from jlink_mcp_arduino_giga.profiles import GIGA_R1
 from jlink_mcp_giga_protocol_bridge.extension import (
     GigaProtocolBridgeExtension,
     _dependencies,
 )
 
-from jlink_mcp.extensions.api import ExtensionError
+from jlink_mcp.extensions.api import (
+    ArtifactService,
+    ExtensionError,
+    ExtensionRegistry,
+    ExtensionServices,
+)
 from jlink_mcp.extensions.loader import ExtensionManager
+from jlink_mcp.service import JLinkService
 
 
 class EntryPoint:
@@ -21,13 +30,35 @@ class EntryPoint:
         return GigaProtocolBridgeExtension
 
 
-def test_bridge_cannot_load_without_arduino_giga(settings) -> None:
-    from jlink_mcp.extensions.api import (
-        ArtifactService,
-        ExtensionRegistry,
-        ExtensionServices,
-    )
+class ArduinoEntryPoint:
+    name = "arduino_giga"
 
+    @staticmethod
+    def load():
+        return ArduinoGigaExtension
+
+
+class FakeMCP:
+    def __init__(self) -> None:
+        self.tools: dict[str, Any] = {}
+        self.resources: dict[str, Any] = {}
+
+    def tool(self, *, name: str, annotations: Any = None):
+        def decorate(function):
+            self.tools[name] = function
+            return function
+
+        return decorate
+
+    def resource(self, uri: str, *, name: str | None, mime_type: str | None):
+        def decorate(function):
+            self.resources[uri] = function
+            return function
+
+        return decorate
+
+
+def test_bridge_cannot_load_without_arduino_giga(settings) -> None:
     manager = ExtensionManager(
         enabled=["giga_protocol_bridge"],
         config_path=None,
@@ -46,6 +77,42 @@ def test_bridge_cannot_load_without_arduino_giga(settings) -> None:
     )
     with pytest.raises(ExtensionError, match="disabled or missing dependencies"):
         manager.load()
+
+
+def test_bridge_consumes_giga_profile_through_public_service(settings) -> None:
+    registry = ExtensionRegistry()
+    service = JLinkService(settings, registry)
+    manager = ExtensionManager(
+        enabled=["arduino_giga", "giga_protocol_bridge"],
+        config_path=None,
+        services=ExtensionServices(
+            jlink=service,
+            serial=service.serial,
+            artifacts=ArtifactService(settings, service.store),
+            audit=service.store,
+            paths=settings,
+            process=service.runner,
+        ),
+        registry=registry,
+        mcp=FakeMCP(),
+        entry_points=[ArduinoEntryPoint(), EntryPoint()],
+        environ={},
+    )
+
+    manager.load()
+
+    assert manager.loaded_ids == ["arduino_giga", "giga_protocol_bridge"]
+    assert registry._services[("arduino_giga", "profile")] is GIGA_R1
+    bridge = registry._services[("giga_protocol_bridge", "bridge")]
+    workflows = registry._services[("giga_protocol_bridge", "workflows")]
+    assert bridge.target_profile is GIGA_R1
+    assert workflows.target_profile is GIGA_R1
+
+
+def test_bridge_runtime_has_no_private_arduino_giga_imports() -> None:
+    runtime_root = Path(__file__).resolve().parents[1] / "src"
+    for source in runtime_root.rglob("*.py"):
+        assert "jlink_mcp_arduino_giga" not in source.read_text(encoding="utf-8")
 
 
 def test_packaged_release_retains_authorizing_checksum(tmp_path: Path) -> None:

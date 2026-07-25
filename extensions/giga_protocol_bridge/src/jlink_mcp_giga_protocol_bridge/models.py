@@ -18,8 +18,12 @@ from pydantic import (
     model_validator,
 )
 
-from jlink_mcp.models import Artifact, CommandResult, utc_now
-from jlink_mcp_arduino_giga.models import DeviceSelector
+from jlink_mcp.models import (
+    Artifact,
+    CommandResult,
+    DeviceSelector as CoreDeviceSelector,
+    utc_now,
+)
 
 MAX_BRIDGE_PAYLOAD = 64 * 1024
 MAX_APPLICATION_PAYLOAD = 64_000
@@ -36,6 +40,18 @@ SAFE_GPIO_PINS = tuple(
 )
 _SAFE_GPIO_SET = frozenset(SAFE_GPIO_PINS)
 _PIN_RE = re.compile(r"^D([0-9]|[1-9][0-9]|10[0-2])$")
+
+
+class TargetCore(StrEnum):
+    M7 = "m7"
+    M4 = "m4"
+
+
+class DeviceSelector(CoreDeviceSelector):
+    """Stable identity used for every target-changing operation."""
+
+    target_profile: str = "arduino_giga_r1"
+    core: TargetCore = TargetCore.M7
 
 
 class BridgeModel(BaseModel):

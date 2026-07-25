@@ -603,3 +603,21 @@ def test_queue_overflow_and_result_serialization() -> None:
     assert dumped["byte_count"] == 6
     assert dumped["overflow"] is True
     assert dumped["metadata"] == {"queue_depth": 3, "overflow_count": 2}
+
+    zero_result = ProtocolBridgeService._result(
+        "uart_receive",
+        make_result(
+            backend="giga-protocol-bridge",
+            parsed={
+                "bridge": {
+                    "status": 0,
+                    "data_base64": "",
+                    "queue_depth": 0,
+                    "overflow_count": 0,
+                }
+            },
+        ),
+    )
+    zero_dumped = zero_result.model_dump(mode="json")
+    assert zero_dumped["overflow"] is False
+    assert zero_dumped["metadata"] == {"queue_depth": 0, "overflow_count": 0}

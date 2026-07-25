@@ -14,6 +14,19 @@ import serial
 
 from ..models import CommandResult
 
+MAX_BINARY_RESPONSE_BYTES = 128 * 1024
+
+
+class SerialResponseLimitExceeded(RuntimeError):
+    """A binary peer sent more data than the bounded response buffer permits."""
+
+    def __init__(self, *, observed_bytes: int, limit_bytes: int) -> None:
+        self.observed_bytes = observed_bytes
+        self.limit_bytes = limit_bytes
+        super().__init__(
+            f"binary serial response exceeded the {limit_bytes}-byte limit"
+        )
+
 
 class SerialBackend:
     name = "usb-serial"
@@ -93,6 +106,7 @@ class SerialBackend:
 
         request_sha256 = hashlib.sha256(write).hexdigest()
         started = datetime.now(UTC)
+        overflow: SerialResponseLimitExceeded | None = None
         try:
             raw = await self._run_sync_to_completion(
                 self._exchange_binary_sync,
@@ -104,11 +118,27 @@ class SerialBackend:
             )
             error = ""
             return_code = 0
+        except SerialResponseLimitExceeded as exc:
+            raw = b""
+            overflow = exc
+            error = f"{type(exc).__name__}: {exc}"
+            return_code = 1
         except (OSError, serial.SerialException) as exc:
             raw = b""
             error = f"{type(exc).__name__}: binary serial exchange failed"
             return_code = 1
         finished = datetime.now(UTC)
+        response_metadata: dict[str, object] = {
+            "response_bytes": len(raw),
+            "response_sha256": hashlib.sha256(raw).hexdigest(),
+        }
+        if overflow is not None:
+            response_metadata = {
+                "response_bytes": 0,
+                "response_overflow": True,
+                "response_observed_bytes": overflow.observed_bytes,
+                "response_limit_bytes": overflow.limit_bytes,
+            }
         result = CommandResult(
             operation_id=str(uuid.uuid4()),
             backend=self.name,
@@ -129,8 +159,7 @@ class SerialBackend:
                 "baudrate": baudrate,
                 "request_bytes": len(write),
                 "request_sha256": request_sha256,
-                "response_bytes": len(raw),
-                "response_sha256": hashlib.sha256(raw).hexdigest(),
+                **response_metadata,
             },
         )
         return result, raw
@@ -194,13 +223,22 @@ class SerialBackend:
         deadline = time.monotonic() + duration
         last_data: float | None = None
         chunks: list[bytes] = []
+        response_bytes = 0
         with serial.Serial(port, baudrate=baudrate, timeout=0.02) as stream:
             stream.reset_input_buffer()
             stream.write(write)
             stream.flush()
             while time.monotonic() < deadline:
-                chunk = stream.read(max(1, stream.in_waiting))
+                remaining_bytes = MAX_BINARY_RESPONSE_BYTES - response_bytes
+                chunk = stream.read(min(max(1, stream.in_waiting), remaining_bytes + 1))
                 if chunk:
+                    observed_bytes = response_bytes + len(chunk)
+                    if observed_bytes > MAX_BINARY_RESPONSE_BYTES:
+                        raise SerialResponseLimitExceeded(
+                            observed_bytes=observed_bytes,
+                            limit_bytes=MAX_BINARY_RESPONSE_BYTES,
+                        )
+                    response_bytes = observed_bytes
                     chunks.append(chunk)
                     last_data = time.monotonic()
                 elif (

@@ -165,6 +165,18 @@ def test_toml_configuration_and_environment_precedence(tmp_path: Path) -> None:
     assert events == ["register:sample:from-environment"]
 
 
+def test_enabled_extension_environment_namespaces_must_be_unique() -> None:
+    events: list[str] = []
+    with pytest.raises(ExtensionError, match="environment namespace collision"):
+        manager(
+            [
+                FakeExtension("foo-bar", events),
+                FakeExtension("foo_bar", events),
+            ]
+        )
+    assert events == []
+
+
 def test_profile_detector_tool_resource_capability_and_doctor_registration() -> None:
     events: list[str] = []
     registry = ExtensionRegistry()

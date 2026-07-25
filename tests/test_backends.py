@@ -22,7 +22,11 @@ from jlink_mcp.backends.commander import (
 )
 from jlink_mcp.backends.gdb import GDBBackend, GDBSession, _free_port
 from jlink_mcp.backends.gui import GUIBackend, GUIProcess
-from jlink_mcp.backends.serial import SerialBackend
+from jlink_mcp.backends.serial import (
+    MAX_BINARY_RESPONSE_BYTES,
+    SerialBackend,
+    SerialResponseLimitExceeded,
+)
 from jlink_mcp.models import DeviceSelector, TargetState
 from jlink_mcp.runner import ProcessRunner
 
@@ -297,6 +301,84 @@ async def test_binary_serial_waits_for_worker_cleanup_on_cancellation(
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await pending
+
+
+def test_binary_serial_response_limit_accepts_boundary_and_rejects_peer_stream(
+    monkeypatch,
+) -> None:
+    streams = []
+
+    class Stream:
+        def __init__(self, chunks):
+            self.chunks = list(chunks)
+            self.closed = False
+
+        @property
+        def in_waiting(self):
+            return len(self.chunks[0]) if self.chunks else 0
+
+        def __enter__(self):
+            streams.append(self)
+            return self
+
+        def __exit__(self, *args):
+            self.closed = True
+
+        def reset_input_buffer(self):
+            return None
+
+        def write(self, payload):
+            return len(payload)
+
+        def flush(self):
+            return None
+
+        def read(self, size):
+            return self.chunks.pop(0) if self.chunks else b""
+
+    responses = [
+        [b"x" * (MAX_BINARY_RESPONSE_BYTES // 2)] * 2,
+        [b"x" * MAX_BINARY_RESPONSE_BYTES, b"continuous-peer-data"],
+    ]
+    monkeypatch.setattr(
+        "jlink_mcp.backends.serial.serial.Serial",
+        lambda *args, **kwargs: Stream(responses.pop(0)),
+    )
+
+    accepted = SerialBackend._exchange_binary_sync(
+        "/dev/tty-test", b"request", 115200, 0.05, 0.01
+    )
+    assert len(accepted) == MAX_BINARY_RESPONSE_BYTES
+    with pytest.raises(SerialResponseLimitExceeded) as raised:
+        SerialBackend._exchange_binary_sync(
+            "/dev/tty-test", b"request", 115200, 0.05, 0.01
+        )
+    assert raised.value.limit_bytes == MAX_BINARY_RESPONSE_BYTES
+    assert raised.value.observed_bytes > MAX_BINARY_RESPONSE_BYTES
+    assert all(stream.closed for stream in streams)
+
+
+@pytest.mark.asyncio
+async def test_binary_serial_response_overflow_is_audited_without_payload(
+    monkeypatch,
+) -> None:
+    backend = SerialBackend()
+
+    def overflow(*args):
+        raise SerialResponseLimitExceeded(
+            observed_bytes=MAX_BINARY_RESPONSE_BYTES + 1,
+            limit_bytes=MAX_BINARY_RESPONSE_BYTES,
+        )
+
+    monkeypatch.setattr(backend, "_exchange_binary_sync", overflow)
+    result, raw = await backend.exchange_binary(
+        "/dev/tty-test", write=b"bounded-request"
+    )
+    assert not result.ok and raw == b""
+    assert result.parsed["response_overflow"] is True
+    assert result.parsed["response_observed_bytes"] == MAX_BINARY_RESPONSE_BYTES + 1
+    assert result.parsed["response_limit_bytes"] == MAX_BINARY_RESPONSE_BYTES
+    assert "response_sha256" not in result.parsed
 
 
 class FakeGDB:

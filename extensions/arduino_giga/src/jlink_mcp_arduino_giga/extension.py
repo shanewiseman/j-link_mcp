@@ -84,6 +84,7 @@ class ArduinoGigaExtension:
         )
         context.publish_service("workflows", workflows)
         context.publish_service("config", config)
+        context.publish_service("profile", GIGA_R1)
         self._register_tools(context, workflows)
 
     def shutdown(self) -> None:

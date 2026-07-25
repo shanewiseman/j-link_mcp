@@ -16,6 +16,7 @@ from jlink_mcp.models import (
 )
 from jlink_mcp.extensions.api import ExtensionRegistry
 from jlink_mcp.service import JLinkService
+from jlink_mcp_arduino_giga.config import ArduinoGigaConfig
 from jlink_mcp_arduino_giga.profiles import GIGA_R1, TargetCore
 from jlink_mcp_arduino_giga.models import BuildResult
 from jlink_mcp_arduino_giga.workflows import ArduinoGigaWorkflows
@@ -134,6 +135,11 @@ async def test_build_firmware_success_and_failure_artifacts(workflow, monkeypatc
     failed_build = await workflow.build_firmware("m7", core=TargetCore.M7)
     assert not failed_build.command.ok
     assert {item.kind for item in failed_build.artifacts} == {"manifest", "checksums"}
+
+
+def test_disposable_fixture_bypass_is_not_configurable() -> None:
+    with pytest.raises(ValueError, match="test_target_disposable"):
+        ArduinoGigaConfig(test_target_disposable=True)
 
 
 @pytest.mark.asyncio

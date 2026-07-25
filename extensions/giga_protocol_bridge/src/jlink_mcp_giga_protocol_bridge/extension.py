@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jlink_mcp_arduino_giga.models import DeviceSelector
 from mcp.types import ToolAnnotations
 
 from jlink_mcp.extensions import (
@@ -19,6 +18,7 @@ from jlink_mcp.models import (
     CapabilityState,
     DependencyCheck,
 )
+from jlink_mcp.profiles import TargetProfile
 
 from .backend import ProtocolBridgeBackend
 from .config import GigaProtocolBridgeConfig
@@ -27,6 +27,7 @@ from .models import (
     BRIDGE_WIRE_VERSION,
     SAFE_GPIO_PINS,
     BridgeProtocol,
+    DeviceSelector,
     ProtocolBridgeControlRequest,
     ProtocolBridgeDeployResult,
     ProtocolBridgeExchangeRequest,
@@ -66,13 +67,22 @@ class GigaProtocolBridgeExtension:
         config = GigaProtocolBridgeConfig.model_validate(context.config)
         giga_workflows = context.require_extension_service("arduino_giga", "workflows")
         giga_config = context.require_extension_service("arduino_giga", "config")
+        giga_profile = context.require_extension_service("arduino_giga", "profile")
+        if not isinstance(giga_profile, TargetProfile):
+            raise TypeError("arduino_giga profile service is not a TargetProfile")
         backend = ProtocolBridgeBackend(context.services.serial)
-        service = ProtocolBridgeService(context.services.jlink, backend, config)
+        service = ProtocolBridgeService(
+            context.services.jlink,
+            backend,
+            config,
+            giga_profile,
+        )
         workflows = ProtocolBridgeWorkflows(
             context.services.jlink,
             service,
             giga_workflows,
             giga_config,
+            giga_profile,
         )
         context.register_capability_provider(_capabilities)
         context.register_dependency_provider(

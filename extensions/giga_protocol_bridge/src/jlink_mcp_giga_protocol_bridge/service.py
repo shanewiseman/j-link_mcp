@@ -6,8 +6,8 @@ import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
-from jlink_mcp.models import CommandResult, DeviceSelector
-from jlink_mcp_arduino_giga.profiles import GIGA_R1
+from jlink_mcp.models import CommandResult
+from jlink_mcp.profiles import TargetProfile
 
 from .backend import ProtocolBridgeBackend
 from .config import GigaProtocolBridgeConfig
@@ -15,6 +15,7 @@ from .models import (
     BRIDGE_WIRE_VERSION,
     BlePairRequest,
     BridgeProtocol,
+    DeviceSelector,
     ProtocolBridgeControlRequest,
     ProtocolBridgeExchangeRequest,
     ProtocolBridgeReceiveRequest,
@@ -28,10 +29,17 @@ from .profiles import load_bridge_profiles
 
 
 class ProtocolBridgeService:
-    def __init__(self, jlink: Any, backend: ProtocolBridgeBackend, config: GigaProtocolBridgeConfig) -> None:
+    def __init__(
+        self,
+        jlink: Any,
+        backend: ProtocolBridgeBackend,
+        config: GigaProtocolBridgeConfig,
+        target_profile: TargetProfile,
+    ) -> None:
         self.jlink = jlink
         self.backend = backend
         self.config = config
+        self.target_profile = target_profile
 
     async def _request(
         self,
@@ -46,10 +54,12 @@ class ProtocolBridgeService:
     ) -> CommandResult:
         resolved = await self.jlink.resolve_selector_wait(selector)
         if (
-            resolved.target_profile != GIGA_R1.id
-            or resolved.core != GIGA_R1.default_core
+            resolved.target_profile != self.target_profile.id
+            or resolved.core != self.target_profile.default_core
         ):
-            raise ValueError("the protocol bridge control plane requires the GIGA primary core")
+            raise ValueError(
+                "the protocol bridge control plane requires the GIGA primary core"
+            )
 
         async def execute(port: str) -> CommandResult:
             return await self.backend.request(
@@ -184,9 +194,9 @@ class ProtocolBridgeService:
         if protocol_name not in {item.value for item in BridgeProtocol}:
             protocol_name = "usb" if operation.startswith("usb_") else "gpio"
         metadata = dict(response.get("metadata", {}))
-        if response.get("queue_depth"):
+        if response.get("queue_depth") is not None:
             metadata["queue_depth"] = response["queue_depth"]
-        if response.get("overflow_count"):
+        if response.get("overflow_count") is not None:
             metadata["overflow_count"] = response["overflow_count"]
         return ProtocolBridgeResult(
             protocol=BridgeProtocol(protocol_name),

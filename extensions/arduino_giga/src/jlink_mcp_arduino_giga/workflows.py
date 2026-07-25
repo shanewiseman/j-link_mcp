@@ -1316,34 +1316,31 @@ class ArduinoGigaWorkflows(Workflows):
                 warnings=warnings,
             )
 
-        if not self.config.test_target_disposable:
-            backup_result, backup = await self.backup_flash(
-                0x08000000, 0x200000, selector=m7_access
+        backup_result, backup = await self.backup_flash(
+            0x08000000, 0x200000, selector=m7_access
+        )
+        steps.append(
+            ValidationStep(
+                name="backup_original_flash",
+                ok=backup_result.ok and backup is not None,
+                operation_id=backup_result.operation_id,
+                details=(
+                    backup.model_dump(mode="json") if backup else backup_result.parsed
+                ),
+                evidence_paths=backup_result.evidence_paths,
             )
-            steps.append(
-                ValidationStep(
-                    name="backup_original_flash",
-                    ok=backup_result.ok and backup is not None,
-                    operation_id=backup_result.operation_id,
-                    details=(
-                        backup.model_dump(mode="json") if backup else backup_result.parsed
-                    ),
-                    evidence_paths=backup_result.evidence_paths,
-                )
+        )
+        if not backup_result.ok or backup is None:
+            warnings.append("Original flash could not be backed up.")
+            return ValidationReport(
+                run_id=run_id,
+                started_at=started,
+                finished_at=datetime.now(UTC),
+                selector=report_selector,
+                steps=steps,
+                warnings=warnings,
             )
-            if not backup:
-                warnings.append(
-                    "Original flash could not be backed up and the target is not designated disposable."
-                )
-                return ValidationReport(
-                    run_id=run_id,
-                    started_at=started,
-                    finished_at=datetime.now(UTC),
-                    selector=report_selector,
-                    steps=steps,
-                    warnings=warnings,
-                )
-            artifacts.append(backup)
+        artifacts.append(backup)
 
         try:
             deploy = await self.dual_core_deploy(

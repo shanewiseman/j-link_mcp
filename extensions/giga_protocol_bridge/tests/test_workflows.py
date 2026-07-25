@@ -33,8 +33,9 @@ def workflow(settings, giga_config):
         service,
         ProtocolBridgeBackend(service.serial),
         GigaProtocolBridgeConfig(),
+        GIGA_R1,
     )
-    return ProtocolBridgeWorkflows(service, bridge, giga, giga_config)
+    return ProtocolBridgeWorkflows(service, bridge, giga, giga_config, GIGA_R1)
 
 
 def selector(core: str = "m7") -> DeviceSelector:

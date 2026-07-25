@@ -220,14 +220,29 @@ class ExtensionManager:
 
 def _validate_enabled(enabled: Sequence[str]) -> list[str]:
     result: list[str] = []
+    environment_namespaces: dict[str, str] = {}
     for raw in enabled:
         extension_id = raw.strip()
         if not extension_id:
             continue
         if extension_id in result:
             raise ExtensionError(f"duplicate enabled extension: {extension_id}")
+        namespace = _environment_namespace(extension_id)
+        if owner := environment_namespaces.get(namespace):
+            raise ExtensionError(
+                "extension environment namespace collision: "
+                f"{owner} and {extension_id} both map to {namespace}"
+            )
+        environment_namespaces[namespace] = extension_id
         result.append(extension_id)
     return result
+
+
+def _environment_namespace(extension_id: str) -> str:
+    normalized = "".join(
+        character.upper() if character.isalnum() else "_" for character in extension_id
+    )
+    return f"JLINK_MCP_EXT_{normalized}__"
 
 
 def _topological_order(
@@ -294,10 +309,7 @@ def _apply_environment_overrides(
     config: dict[str, Any],
     environ: Mapping[str, str],
 ) -> dict[str, Any]:
-    normalized = "".join(
-        character.upper() if character.isalnum() else "_" for character in extension_id
-    )
-    prefix = f"JLINK_MCP_EXT_{normalized}__"
+    prefix = _environment_namespace(extension_id)
     result = dict(config)
     for name, raw in environ.items():
         if not name.startswith(prefix):

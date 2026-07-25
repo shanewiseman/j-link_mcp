@@ -7,18 +7,16 @@ import json
 import shutil
 import uuid
 from pathlib import Path
-
-from jlink_mcp_arduino_giga.config import ArduinoGigaConfig
-from jlink_mcp_arduino_giga.models import DeviceSelector
-from jlink_mcp_arduino_giga.profiles import TargetCore
-from jlink_mcp_arduino_giga.workflows import ArduinoGigaWorkflows
+from typing import Any
 
 from jlink_mcp.artifacts import registerable_artifact
 from jlink_mcp.models import Artifact
+from jlink_mcp.profiles import TargetProfile
 
 from .models import (
     BRIDGE_FIRMWARE_VERSION,
     BRIDGE_WIRE_VERSION,
+    DeviceSelector,
     ProtocolBridgeDeployResult,
     ProtocolBridgeReleaseResult,
 )
@@ -88,14 +86,16 @@ class ProtocolBridgeWorkflows:
         self,
         service,
         bridge: ProtocolBridgeService,
-        giga_workflows: ArduinoGigaWorkflows,
-        giga_config: ArduinoGigaConfig,
+        giga_workflows: Any,
+        giga_config: Any,
+        target_profile: TargetProfile,
     ) -> None:
         self.service = service
         self.settings = service.settings
         self.bridge = bridge
         self.giga_workflows = giga_workflows
         self.giga_config = giga_config
+        self.target_profile = target_profile
 
     @staticmethod
     def _firmware_root() -> Path:
@@ -309,7 +309,10 @@ class ProtocolBridgeWorkflows:
         """Back up all internal flash, deploy the release HEX, and handshake."""
 
         resolved = await self.service.resolve_selector_wait(selector)
-        if resolved.core != TargetCore.M7:
+        if (
+            resolved.target_profile != self.target_profile.id
+            or resolved.core != self.target_profile.default_core
+        ):
             raise ValueError("the protocol bridge firmware runs on the GIGA M7")
         release = self._firmware_root().resolve(strict=True) / "release"
         hex_path = release / "protocol_bridge_m7.hex"
