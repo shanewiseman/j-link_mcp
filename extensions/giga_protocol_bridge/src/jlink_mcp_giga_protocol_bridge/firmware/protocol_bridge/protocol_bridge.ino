@@ -1215,7 +1215,7 @@ void receiveOperation(const TlvReader& reader, uint32_t request_id) {
     return;
   }
   const uint32_t deadline = millis() + timeout;
-  while (receive_queue.depth(protocol) == 0 &&
+  while (receive_queue.depth(protocol, channel) == 0 &&
          static_cast<int32_t>(deadline - millis()) > 0) {
     pollUarts();
     pollCan();
@@ -1224,7 +1224,8 @@ void receiveOperation(const TlvReader& reader, uint32_t request_id) {
     pollBle();
     delay(1);
   }
-  const size_t length = receive_queue.read(protocol, response_data, limit, drain != 0);
+  const size_t length = receive_queue.read(
+      protocol, channel, response_data, limit, drain != 0);
   snprintf(metadata_buffer, sizeof(metadata_buffer),
            "{\"protocol\":%u,\"channel\":%u,"
            "\"record_header\":\"channel:u8,length:u16,timestamp_us:u64\","
@@ -1232,7 +1233,7 @@ void receiveOperation(const TlvReader& reader, uint32_t request_id) {
            protocol, channel, drain ? "true" : "false");
   sendResponse(request_id, kStatusOk, response_data, static_cast<uint16_t>(length),
                metadata_buffer,
-               min<uint32_t>(receive_queue.depth(protocol), UINT16_MAX),
+               min<uint32_t>(receive_queue.depth(protocol, channel), UINT16_MAX),
                receive_queue.overflow(protocol));
 }
 

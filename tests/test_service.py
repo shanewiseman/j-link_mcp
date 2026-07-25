@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import copy
 import asyncio
+import copy
+
 import pytest
+from conftest import make_result
 
 import jlink_mcp.service as service_module
 from jlink_mcp.extensions.api import ExtensionRegistry
 from jlink_mcp.models import DependencyReport, DeviceSelector
 from jlink_mcp.profiles import CoreProfile, TargetProfile
 from jlink_mcp.service import JLinkService, TargetSelectionError
-
-from conftest import make_result
-
 
 PROBE = "000802008248"
 BOARD = "0045002B3333511632363530"
@@ -80,11 +79,87 @@ def selector(core: str = PRIMARY):
     )
 
 
-def test_target_operation_requires_a_registered_profile(settings, manifest, monkeypatch) -> None:
+def test_target_operation_requires_a_registered_profile(
+    settings, manifest, monkeypatch
+) -> None:
     instance = JLinkService(settings, ExtensionRegistry())
     monkeypatch.setattr(instance, "capabilities", lambda: copy.deepcopy(manifest))
     with pytest.raises(TargetSelectionError, match="no target profile is registered"):
         instance.resolve_selector(None)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"minimum_target_voltage": 0.0}, "finite and positive"),
+        ({"minimum_target_voltage": -1.0}, "finite and positive"),
+        ({"minimum_target_voltage": float("nan")}, "finite and positive"),
+        ({"minimum_target_voltage": float("inf")}, "finite and positive"),
+        ({"default_interface": ""}, "default_interface"),
+        ({"default_interface": "   "}, "default_interface"),
+        ({"default_speed_khz": 4}, "default_speed_khz"),
+        ({"default_speed_khz": 50001}, "default_speed_khz"),
+    ],
+)
+def test_target_profile_rejects_unsafe_defaults(overrides, message) -> None:
+    values = {
+        "id": "invalid",
+        "display_name": "Invalid",
+        "cores": {
+            "primary": CoreProfile(
+                id="primary",
+                jlink_device="INVALID",
+                expected_core="Invalid-Core",
+                expected_cpuid=1,
+            )
+        },
+        "default_core": "primary",
+        "expected_dpidr": 1,
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValueError, match=message):
+        TargetProfile(**values)
+
+
+def test_selector_uses_profile_defaults_only_for_omitted_fields(
+    settings, manifest, monkeypatch
+) -> None:
+    profile = TargetProfile(
+        id=PROFILE,
+        display_name="Alternate transport target",
+        cores=SAMPLE_PROFILE.cores,
+        default_core=PRIMARY,
+        expected_dpidr=0x6BA02477,
+        default_interface="JTAG",
+        default_speed_khz=1234,
+    )
+    registry = ExtensionRegistry()
+    registry.targets.register_profile(profile)
+    instance = JLinkService(settings, registry)
+    monkeypatch.setattr(instance, "capabilities", lambda: copy.deepcopy(manifest))
+    omitted = DeviceSelector(
+        probe_serial=PROBE,
+        board_serial=BOARD,
+        target_profile=PROFILE,
+        core=PRIMARY,
+    )
+    explicit = DeviceSelector(
+        probe_serial=PROBE,
+        board_serial=BOARD,
+        target_profile=PROFILE,
+        core=PRIMARY,
+        interface="SWD",
+        speed_khz=4000,
+    )
+
+    resolved_omitted = instance.resolve_selector(omitted)
+    resolved_explicit = instance.resolve_selector(explicit)
+
+    assert resolved_omitted.interface == "JTAG"
+    assert resolved_omitted.speed_khz == 1234
+    assert resolved_explicit.interface == "SWD"
+    assert resolved_explicit.speed_khz == 4000
 
 
 def test_capability_and_doctor_merge_sparse_recent_probe_evidence(
@@ -131,7 +206,9 @@ def test_capability_and_doctor_merge_sparse_recent_probe_evidence(
     assert license_check.ok
 
 
-def test_selector_unique_explicit_ambiguity_and_audit_reconnect(service, manifest, monkeypatch) -> None:
+def test_selector_unique_explicit_ambiguity_and_audit_reconnect(
+    service, manifest, monkeypatch
+) -> None:
     resolved = service.resolve_selector(None)
     assert resolved.probe_serial == PROBE and resolved.board_serial == BOARD
     assert service.resolve_selector(selector()).core == PRIMARY
@@ -214,7 +291,9 @@ async def test_hotplug_retry_and_timeout(service, monkeypatch) -> None:
 
     monkeypatch.setattr(service, "resolve_selector", intermittent)
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
-    assert (await service.resolve_selector_wait(selector(), timeout=1)).probe_serial == PROBE
+    assert (
+        await service.resolve_selector_wait(selector(), timeout=1)
+    ).probe_serial == PROBE
     monkeypatch.setattr(
         service,
         "resolve_selector",
@@ -270,6 +349,7 @@ async def test_serial_waits_for_post_identity_usb_renumeration(
         "exchange:/dev/ttyACM0",
     ]
 
+
 def test_identity_gate_all_failure_reasons(service) -> None:
     invalid = identity()
     invalid.return_code = 1
@@ -310,8 +390,12 @@ async def test_all_atomic_service_wrappers_and_validation(service, monkeypatch) 
     assert (await service.halt(selector())).ok
     assert (await service.go(selector())).ok
     assert (await service.step(selector(), count=2)).ok
-    assert (await service.read_memory(0x20000000, count=2, width=8, selector=selector())).ok
-    assert (await service.write_memory(0x20000000, [1, 2], width=16, selector=selector())).ok
+    assert (
+        await service.read_memory(0x20000000, count=2, width=8, selector=selector())
+    ).ok
+    assert (
+        await service.write_memory(0x20000000, [1, 2], width=16, selector=selector())
+    ).ok
     assert (await service.set_breakpoint(0x08000000, selector=selector())).ok
     assert (await service.clear_breakpoint(2, selector=selector())).ok
     assert (await service.read_register("R0", selector=selector())).ok
@@ -320,11 +404,17 @@ async def test_all_atomic_service_wrappers_and_validation(service, monkeypatch) 
     assert (await service.clear_watchpoint(1, selector=selector())).ok
     assert (await service.erase_flash(selector=selector())).ok
     assert (await service.erase_flash(0x08000000, 0x08001000, selector=selector())).ok
-    assert (await service.verify_binary(str(bin_path), 0x08000000, selector=selector())).ok
+    assert (
+        await service.verify_binary(str(bin_path), 0x08000000, selector=selector())
+    ).ok
     assert (await service.probe_info(selector())).ok
     assert (await service.command_string("SetResetType 2", selector=selector())).ok
     for action in ("speeds", "status", "stop", "capture"):
-        assert (await service.swo(action, speed_hz=1000000, capture_ms=1, selector=selector())).ok
+        assert (
+            await service.swo(
+                action, speed_hz=1000000, capture_ms=1, selector=selector()
+            )
+        ).ok
     assert (await service.raw(["H"], selector=selector(), destructive=False)).ok
     assert len(calls) == 24
 
@@ -343,7 +433,9 @@ async def test_all_atomic_service_wrappers_and_validation(service, monkeypatch) 
         lambda: service.clear_watchpoint(-1, selector=selector()),
         lambda: service.erase_flash(0, None, selector=selector()),
         lambda: service.erase_flash(2, 1, selector=selector()),
-        lambda: service.verify_binary(str(bin_path.with_suffix(".hex")), 0, selector=selector()),
+        lambda: service.verify_binary(
+            str(bin_path.with_suffix(".hex")), 0, selector=selector()
+        ),
         lambda: service.swo("capture", speed_hz=4000001, selector=selector()),
         lambda: service.swo("capture", capture_ms=0, selector=selector()),
         lambda: service.swo("invalid", selector=selector()),
@@ -354,7 +446,9 @@ async def test_all_atomic_service_wrappers_and_validation(service, monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_disconnect_probe_list_application_and_serial(service, monkeypatch) -> None:
+async def test_disconnect_probe_list_application_and_serial(
+    service, monkeypatch
+) -> None:
     monkeypatch.setattr(service.commander, "probe_list", lambda: None)
 
     async def probe_list():
@@ -441,7 +535,9 @@ async def test_disconnect_probe_list_application_and_serial(service, monkeypatch
         return make_result(parsed={"port": port, "records": []})
 
     monkeypatch.setattr(service.serial, "exchange", exchange)
-    serial = await service.serial_exchange(selector=selector(), write="PING", duration=0.1)
+    serial = await service.serial_exchange(
+        selector=selector(), write="PING", duration=0.1
+    )
     assert serial.target_identity["board_serial"] == BOARD
 
 

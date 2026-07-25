@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import struct
 import zlib
 from pathlib import Path
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
-
-from jlink_mcp.backends.serial import SerialBackend
 from jlink_mcp_giga_protocol_bridge.backend import ProtocolBridgeBackend
 from jlink_mcp_giga_protocol_bridge.models import (
     BlePairRequest,
@@ -50,6 +48,9 @@ from jlink_mcp_giga_protocol_bridge.wire import (
     encode_tlvs,
     reassemble_frames,
 )
+from pydantic import TypeAdapter, ValidationError
+
+from jlink_mcp.backends.serial import SerialBackend
 
 from .conftest import make_result
 
@@ -130,7 +131,9 @@ def test_protocol_specific_contract_bounds() -> None:
         UsbSelectRequest(operation="usb_select", vendor_id=0x2341)
 
 
-def test_every_control_and_exchange_discriminator_is_typed_and_extra_forbidden() -> None:
+def test_every_control_and_exchange_discriminator_is_typed_and_extra_forbidden() -> (
+    None
+):
     controls = [
         {"operation": "uart_configure", "port": 0, "baudrate": 115200},
         {"operation": "can_configure", "bus": 0, "bitrate": 500000},
@@ -229,7 +232,10 @@ def test_wire_golden_vector_segmentation_crc_and_sequences() -> None:
     stream = encode_message(payload, message_type=MessageType.RESPONSE, request_id=7)
     frames = decode_stream(stream)
     assert len(frames) > 1
-    assert reassemble_frames(frames, request_id=7, message_type=MessageType.RESPONSE) == payload
+    assert (
+        reassemble_frames(frames, request_id=7, message_type=MessageType.RESPONSE)
+        == payload
+    )
     with pytest.raises(BridgeSequenceError, match="required segments"):
         reassemble_frames(frames[:-1], request_id=7)
     with pytest.raises(BridgeSequenceError, match="out-of-order"):
@@ -283,9 +289,7 @@ def test_wire_rejects_malformed_unsupported_and_partial_frames() -> None:
     with pytest.raises(BridgeWireError, match="payload length"):
         decode_frame(cobs_encode(malformed_length) + b"\x00")
     with pytest.raises(BridgeWireError, match="64 KiB"):
-        encode_message(
-            b"x" * 65_537, message_type=MessageType.REQUEST, request_id=7
-        )
+        encode_message(b"x" * 65_537, message_type=MessageType.REQUEST, request_id=7)
 
 
 def test_tlv_and_operation_golden_vectors_fail_closed() -> None:
@@ -338,9 +342,7 @@ def test_named_profiles_require_strict_mode_and_redact_secrets(tmp_path: Path) -
         load_bridge_profiles(None)
 
     pair = BlePairRequest(operation="ble_pair", passkey_profile="sensor")
-    pair_fields = decode_tlvs(
-        encode_request_body(pair, secrets={"passkey": "123456"})
-    )
+    pair_fields = decode_tlvs(encode_request_body(pair, secrets={"passkey": "123456"}))
     assert pair_fields[int(FieldId.PASSKEY)] == b"123456"
     assert b"sensor" not in b"".join(pair_fields.values())
 
@@ -348,7 +350,9 @@ def test_named_profiles_require_strict_mode_and_redact_secrets(tmp_path: Path) -
 @pytest.mark.asyncio
 async def test_binary_serial_and_bridge_backend_never_log_payloads(monkeypatch) -> None:
     serial = SerialBackend()
-    monkeypatch.setattr(serial, "_exchange_binary_sync", lambda *args: b"response-secret")
+    monkeypatch.setattr(
+        serial, "_exchange_binary_sync", lambda *args: b"response-secret"
+    )
     result, raw = await serial.exchange_binary("/dev/tty-test", write=b"request-secret")
     assert result.ok and raw == b"response-secret"
     dumped = result.model_dump_json()
@@ -375,17 +379,32 @@ async def test_binary_serial_and_bridge_backend_never_log_payloads(monkeypatch) 
         async def exchange_binary(self, port, **kwargs):
             assert port == "/dev/tty-test"
             assert kwargs["write"].endswith(b"\x00")
-            return make_result(backend="usb-serial"), response_stream
+            request_sha256 = hashlib.sha256(kwargs["write"]).hexdigest()
+            inherited = make_result(
+                backend="usb-serial",
+                parsed={"request_sha256": request_sha256},
+            )
+            inherited.command = [
+                "serial-binary",
+                port,
+                f"sha256:{request_sha256}",
+            ]
+            return inherited, response_stream
 
     bridge = ProtocolBridgeBackend(FakeSerial())
     bridge_result = await bridge.request(
-        "/dev/tty-test", {"operation": "get_status"}, secrets_to_send={"password": "request-secret"}
+        "/dev/tty-test",
+        {"operation": "get_status"},
+        secrets_to_send={"password": "request-secret"},
     )
     assert bridge_result.ok
     assert bridge_result.parsed["bridge"]["data_base64"] == _b64(b"opaque-response")
     assert "opaque-response" not in bridge_result.model_dump_json()
     assert "request-secret" not in bridge_result.model_dump_json()
 
+    assert "request_sha256" not in bridge_result.parsed
+    assert "request_body_sha256" not in bridge_result.parsed
+    assert not any("sha256" in item for item in bridge_result.command)
     error_body = encode_tlvs(
         [
             (FieldId.STATUS, struct.pack("<H", 9)),
@@ -409,7 +428,45 @@ async def test_binary_serial_and_bridge_backend_never_log_payloads(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_bridge_backend_timeout_cancellation_and_partial_response_mapping() -> None:
+async def test_bridge_backend_serializes_complete_exchange_per_port() -> None:
+    class SerializedSerial:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+
+        async def exchange_binary(self, port, **kwargs):
+            frame = decode_stream(kwargs["write"])[0]
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            response = encode_message(
+                encode_tlvs(
+                    [
+                        (FieldId.STATUS, struct.pack("<H", 0)),
+                        (FieldId.TIMESTAMP_US, struct.pack("<Q", 123)),
+                    ]
+                ),
+                message_type=MessageType.RESPONSE,
+                request_id=frame.request_id,
+            )
+            return make_result(), response
+
+    serial = SerializedSerial()
+    backend = ProtocolBridgeBackend(serial)
+    first, second = await asyncio.gather(
+        backend.request("/dev/tty-shared", {"operation": "get_status"}),
+        backend.request("/dev/tty-shared", {"operation": "get_status"}),
+    )
+
+    assert first.ok and second.ok
+    assert serial.max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_bridge_backend_timeout_cancellation_and_partial_response_mapping() -> (
+    None
+):
     class TimedOutSerial:
         async def exchange_binary(self, port, **kwargs):
             return make_result(return_code=None, timed_out=True), b"partial-response"

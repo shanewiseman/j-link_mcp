@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import secrets
 from typing import Any
 
 from pydantic import BaseModel
+
+from jlink_mcp.backends.serial import SerialBackend
+from jlink_mcp.models import CommandResult
 
 from .wire import (
     BridgeWireError,
@@ -17,8 +21,6 @@ from .wire import (
     encode_request_body,
     reassemble_frames,
 )
-from jlink_mcp.backends.serial import SerialBackend
-from jlink_mcp.models import CommandResult
 
 
 class ProtocolBridgeBackend:
@@ -26,6 +28,7 @@ class ProtocolBridgeBackend:
 
     def __init__(self, serial_backend: SerialBackend) -> None:
         self.serial = serial_backend
+        self._port_locks: dict[str, asyncio.Lock] = {}
 
     async def request(
         self,
@@ -35,6 +38,25 @@ class ProtocolBridgeBackend:
         operation: str | None = None,
         secrets_to_send: dict[str, str] | None = None,
         timeout: float = 5.0,
+    ) -> CommandResult:
+        lock = self._port_locks.setdefault(port, asyncio.Lock())
+        async with lock:
+            return await self._request_locked(
+                port,
+                request,
+                operation=operation,
+                secrets_to_send=secrets_to_send,
+                timeout=timeout,
+            )
+
+    async def _request_locked(
+        self,
+        port: str,
+        request: BaseModel | dict[str, Any],
+        *,
+        operation: str | None,
+        secrets_to_send: dict[str, str] | None,
+        timeout: float,
     ) -> CommandResult:
         request_id = secrets.randbits(32)
         body = encode_request_body(
@@ -51,15 +73,19 @@ class ProtocolBridgeBackend:
             "protocol-bridge",
             port,
             f"request-id:{request_id}",
-            f"body-sha256:{hashlib.sha256(body).hexdigest()}",
         ]
         serial_result.parsed.update(
             {
                 "request_id": request_id,
                 "request_body_bytes": len(body),
-                "request_body_sha256": hashlib.sha256(body).hexdigest(),
             }
         )
+        if secrets_to_send:
+            serial_result.parsed.pop("request_sha256", None)
+        else:
+            body_sha256 = hashlib.sha256(body).hexdigest()
+            serial_result.command.append(f"body-sha256:{body_sha256}")
+            serial_result.parsed["request_body_sha256"] = body_sha256
         if not serial_result.ok:
             return serial_result
         try:

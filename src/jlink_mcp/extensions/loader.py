@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import stat
+import threading
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from ..models import ExtensionCapability
 from .api import (
@@ -79,52 +81,105 @@ class ExtensionManager:
 
         order = _topological_order(objects, self.enabled)
         raw_config = _load_config(self.config_path)
-        for extension_id in order:
-            extension = objects[extension_id]
-            config_data = dict(raw_config.get(extension_id, {}))
-            config_data = _apply_environment_overrides(
-                extension_id, config_data, self._environ
-            )
-            config_model = getattr(extension, "config_model", EmptyExtensionConfig)
-            try:
-                config = config_model.model_validate(config_data)
-            except (AttributeError, ValidationError, TypeError, ValueError) as exc:
-                raise ExtensionError(
-                    f"invalid configuration for extension {extension_id}: {exc}"
-                ) from exc
-            context = ExtensionContext(
-                extension_id=extension_id,
-                config=config,
-                services=self.services,
-                registry=self.registry,
-                mcp=self.mcp,
-            )
-            try:
-                extension.register(context)
-            except Exception as exc:
-                raise ExtensionError(
-                    f"initialization failed for extension {extension_id}: {exc}"
-                ) from exc
-            self._loaded.append(extension)
-            self.registry.extension_infos.append(
-                ExtensionCapability(
-                    id=extension.id,
-                    version=extension.version,
-                    api_version=extension.api_version,
-                    dependencies=list(extension.dependencies),
+        contexts: list[ExtensionContext] = []
+        started: list[Any] = []
+        info_count = len(self.registry.extension_infos)
+        try:
+            for extension_id in order:
+                extension = objects[extension_id]
+                config_data = dict(raw_config.get(extension_id, {}))
+                config_data = _apply_environment_overrides(
+                    extension_id, config_data, self._environ
                 )
+                config_model = getattr(extension, "config_model", EmptyExtensionConfig)
+                try:
+                    config = config_model.model_validate(config_data)
+                except (AttributeError, ValidationError, TypeError, ValueError) as exc:
+                    raise ExtensionError(
+                        f"invalid configuration for extension {extension_id}: {exc}"
+                    ) from exc
+                context = ExtensionContext(
+                    extension_id=extension_id,
+                    config=config,
+                    services=self.services,
+                    registry=self.registry,
+                    mcp=self.mcp,
+                )
+                contexts.append(context)
+                started.append(extension)
+                try:
+                    extension.register(context)
+                except Exception as exc:
+                    raise ExtensionError(
+                        f"initialization failed for extension {extension_id}: {exc}"
+                    ) from exc
+                self._loaded.append(extension)
+                self.registry.extension_infos.append(
+                    ExtensionCapability(
+                        id=extension.id,
+                        version=extension.version,
+                        api_version=extension.api_version,
+                        dependencies=list(extension.dependencies),
+                    )
+                )
+        except Exception as exc:
+            cleanup_errors = self._shutdown_after_failed_load(started)
+            for context in reversed(contexts):
+                cleanup_errors.extend(context._rollback_registration())
+            del self.registry.extension_infos[info_count:]
+            self._loaded.clear()
+            suffix = (
+                "; rollback errors: " + "; ".join(cleanup_errors)
+                if cleanup_errors
+                else ""
             )
+            raise ExtensionError(f"{exc}{suffix}") from exc
 
     async def shutdown(self) -> None:
         errors: list[str] = []
         for extension in reversed(self._loaded):
             try:
                 await call_shutdown(extension.shutdown)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - run every shutdown hook
                 errors.append(f"{extension.id}: {exc}")
         self._loaded.clear()
         if errors:
             raise ExtensionError("extension shutdown failed: " + "; ".join(errors))
+
+    @staticmethod
+    def _shutdown_after_failed_load(extensions: Sequence[Any]) -> list[str]:
+        async def run() -> list[str]:
+            errors: list[str] = []
+            for extension in reversed(extensions):
+                try:
+                    await call_shutdown(extension.shutdown)
+                except Exception as exc:  # noqa: BLE001 - run every rollback hook
+                    errors.append(f"{extension.id}: {exc}")
+            return errors
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(run())
+
+        result: list[str] = []
+        thread_error: list[BaseException] = []
+
+        def execute() -> None:
+            try:
+                result.extend(asyncio.run(run()))
+            except BaseException as exc:  # noqa: BLE001 - cross-thread propagation
+                thread_error.append(exc)
+
+        thread = threading.Thread(target=execute, name="jlink-extension-rollback")
+        thread.start()
+        thread.join()
+        if thread_error:
+            failure = thread_error[0]
+            result.append(
+                f"shutdown runner failed: {type(failure).__name__}: {failure}"
+            )
+        return result
 
     def _discover(self) -> dict[str, list[Any]]:
         points = self._entry_points
@@ -240,8 +295,7 @@ def _apply_environment_overrides(
     environ: Mapping[str, str],
 ) -> dict[str, Any]:
     normalized = "".join(
-        character.upper() if character.isalnum() else "_"
-        for character in extension_id
+        character.upper() if character.isalnum() else "_" for character in extension_id
     )
     prefix = f"JLINK_MCP_EXT_{normalized}__"
     result = dict(config)

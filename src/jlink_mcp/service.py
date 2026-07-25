@@ -147,9 +147,12 @@ class JLinkService:
         for entry in self.store.list_operations(limit=1000):
             result = entry["payload"].get("result", {})
             probe = result.get("probe_identity", {})
-            if probe.get("licenses") and not probe_evidence.get("licenses"):
-                probe_evidence = probe
-            elif not probe_evidence and probe.get("serial"):
+            if (
+                probe.get("licenses")
+                and not probe_evidence.get("licenses")
+                or not probe_evidence
+                and probe.get("serial")
+            ):
                 probe_evidence = probe
         report.checks.extend(self.extensions.dependency_checks(report.manifest))
         report.checks.extend(
@@ -193,7 +196,10 @@ class JLinkService:
                 board.target_profile
                 for board in manifest.boards
                 if board.target_profile
-                and (selector.board_serial is None or board.serial == selector.board_serial)
+                and (
+                    selector.board_serial is None
+                    or board.serial == selector.board_serial
+                )
             }
             if len(matching_profile_ids) == 1:
                 profile_id = matching_profile_ids.pop()
@@ -244,14 +250,17 @@ class JLinkService:
                 "board selection is ambiguous; provide board_serial"
             )
 
-        return selector.model_copy(
-            update={
-                "probe_serial": probe_serial,
-                "board_serial": board_serial,
-                "target_profile": profile_id,
-                "core": core,
-            }
-        )
+        updates = {
+            "probe_serial": probe_serial,
+            "board_serial": board_serial,
+            "target_profile": profile_id,
+            "core": core,
+        }
+        if "interface" not in selector.model_fields_set:
+            updates["interface"] = profile.default_interface
+        if "speed_khz" not in selector.model_fields_set:
+            updates["speed_khz"] = profile.default_speed_khz
+        return selector.model_copy(update=updates)
 
     async def resolve_selector_wait(
         self,
@@ -291,9 +300,7 @@ class JLinkService:
                     commands, selector=resolved, timeout=timeout
                 )
                 result.session_id = lease.lease_id
-                result.parsed.setdefault(
-                    "selector", resolved.model_dump(mode="json")
-                )
+                result.parsed.setdefault("selector", resolved.model_dump(mode="json"))
                 self._attach_identities(result, resolved, result.parsed)
                 self.store.append_operation(
                     result=result,
@@ -394,9 +401,7 @@ class JLinkService:
         if not selector.probe_serial or not self._serial_equal(
             probe, selector.probe_serial
         ):
-            failures.append(
-                f"probe serial {probe!r} != {selector.probe_serial!r}"
-            )
+            failures.append(f"probe serial {probe!r} != {selector.probe_serial!r}")
         if failures:
             raise TargetSelectionError(
                 "positive target identification failed: " + "; ".join(failures)
@@ -443,9 +448,7 @@ class JLinkService:
             destructive=False,
         )
 
-    async def disconnect(
-        self, selector: DeviceSelector | None = None
-    ) -> CommandResult:
+    async def disconnect(self, selector: DeviceSelector | None = None) -> CommandResult:
         """Return the explicit state of Commander's session-scoped connection."""
 
         resolved = await self.resolve_selector_wait(selector)
@@ -639,7 +642,10 @@ class JLinkService:
             raise ValueError("invalid erase range")
         command = "Erase" if start is None else f"Erase 0x{start:X}, 0x{end:X}"
         return await self.commander_commands(
-            [command], selector=selector, action="erase_flash", destructive=True,
+            [command],
+            selector=selector,
+            action="erase_flash",
+            destructive=True,
             timeout=180,
         )
 
@@ -661,9 +667,7 @@ class JLinkService:
             timeout=180,
         )
 
-    async def probe_info(
-        self, selector: DeviceSelector | None = None
-    ) -> CommandResult:
+    async def probe_info(self, selector: DeviceSelector | None = None) -> CommandResult:
         return await self.commander_commands(
             ["ShowFWInfo", "ShowHWStatus", "ShowConf", "Uptime"],
             selector=selector,
@@ -778,11 +782,10 @@ class JLinkService:
         if not 0 <= resume_settle_seconds <= 5:
             raise ValueError("resume_settle_seconds must be between 0 and 5")
         if resume_settle_seconds and not resume_after_preflight:
-            raise ValueError(
-                "resume_settle_seconds requires resume_after_preflight"
-            )
+            raise ValueError("resume_settle_seconds requires resume_after_preflight")
         if not destructive and (
-            len(args) != 1 or args[0].lower() not in _INFORMATIONAL_APPLICATION_ARGUMENTS
+            len(args) != 1
+            or args[0].lower() not in _INFORMATIONAL_APPLICATION_ARGUMENTS
         ):
             raise ValueError(
                 "non-destructive SEGGER application use is limited to one help/version argument"
@@ -1072,11 +1075,7 @@ class JLinkService:
     ) -> dict[str, Any]:
         resolved = await self.resolve_selector_wait(selector)
         assert resolved.probe_serial is not None
-        path = (
-            self.settings.resolve_allowed_path(elf_path)
-            if elf_path
-            else None
-        )
+        path = self.settings.resolve_allowed_path(elf_path) if elf_path else None
         lease = await self.leases.acquire(
             resolved.probe_serial,
             owner="gdb_session",
@@ -1223,7 +1222,9 @@ class JLinkService:
 
         path = self.settings.resolve_allowed_path(screenshot_path)
         result = await self.gui.ocr(path)
-        result.artifact_hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        result.artifact_hashes[str(path)] = hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
         self.store.append_operation(
             result=result,
             action="gui_ocr",

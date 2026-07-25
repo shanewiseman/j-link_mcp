@@ -61,7 +61,7 @@ class Extension(Protocol):
     dependencies: Sequence[str]
     config_model: type[BaseModel]
 
-    def register(self, context: "ExtensionContext") -> None: ...
+    def register(self, context: ExtensionContext) -> None: ...
 
     def shutdown(self) -> None | Awaitable[None]: ...
 
@@ -152,9 +152,7 @@ class ExtensionRegistry:
         manifest.extensions = list(self.extension_infos)
         return manifest
 
-    def dependency_checks(
-        self, manifest: CapabilityManifest
-    ) -> list[DependencyCheck]:
+    def dependency_checks(self, manifest: CapabilityManifest) -> list[DependencyCheck]:
         checks: list[DependencyCheck] = []
         names: set[str] = set()
         for extension_id, provider in self._dependency_providers:
@@ -205,21 +203,48 @@ class ExtensionContext:
         self.services = services
         self._registry = registry
         self._mcp = mcp
+        self._rollback_actions: list[Callable[[], None]] = []
+
+    def _rollback_registration(self) -> list[str]:
+        """Undo this context's registrations in reverse order."""
+
+        errors: list[str] = []
+        for action in reversed(self._rollback_actions):
+            try:
+                action()
+            except Exception as exc:  # noqa: BLE001 - continue all inverse actions
+                errors.append(f"{type(exc).__name__}: {exc}")
+        self._rollback_actions.clear()
+        return errors
 
     def register_target_profile(self, profile: TargetProfile) -> None:
         self._registry.targets.register_profile(profile)
+        self._rollback_actions.append(
+            lambda: self._registry.targets.unregister_profile(profile.id)
+        )
 
     def register_board_detector(
         self, detector_id: str, detector: BoardDetector
     ) -> None:
         namespaced = f"{self.extension_id}:{detector_id}"
         self._registry.targets.register_board_detector(namespaced, detector)
+        self._rollback_actions.append(
+            lambda: self._registry.targets.unregister_board_detector(namespaced)
+        )
 
     def register_capability_provider(self, provider: CapabilityProvider) -> None:
-        self._registry._capability_providers.append((self.extension_id, provider))
+        entry = (self.extension_id, provider)
+        self._registry._capability_providers.append(entry)
+        self._rollback_actions.append(
+            lambda: self._registry._capability_providers.remove(entry)
+        )
 
     def register_dependency_provider(self, provider: DependencyProvider) -> None:
-        self._registry._dependency_providers.append((self.extension_id, provider))
+        entry = (self.extension_id, provider)
+        self._registry._dependency_providers.append(entry)
+        self._rollback_actions.append(
+            lambda: self._registry._dependency_providers.remove(entry)
+        )
 
     def publish_service(self, name: str, service: Any) -> None:
         key = (self.extension_id, name)
@@ -228,6 +253,7 @@ class ExtensionContext:
                 f"duplicate extension service: {self.extension_id}:{name}"
             )
         self._registry._services[key] = service
+        self._rollback_actions.append(lambda: self._registry._services.pop(key, None))
 
     def require_extension_service(self, extension_id: str, name: str) -> Any:
         try:
@@ -236,6 +262,33 @@ class ExtensionContext:
             raise ExtensionError(
                 f"required extension service is unavailable: {extension_id}:{name}"
             ) from exc
+
+    def _remove_tool(self, tool_name: str) -> None:
+        self._registry.tool_names.discard(tool_name)
+        remove_tool = getattr(self._mcp, "remove_tool", None)
+        if callable(remove_tool):
+            remove_tool(tool_name)
+            return
+        tools = getattr(self._mcp, "tools", None)
+        if isinstance(tools, dict):
+            tools.pop(tool_name, None)
+
+    def _remove_resource(self, uri: str) -> None:
+        self._registry.resource_uris.discard(uri)
+        resources = getattr(self._mcp, "resources", None)
+        if isinstance(resources, dict):
+            resources.pop(uri, None)
+            return
+        manager = getattr(self._mcp, "_resource_manager", None)
+        if manager is None:
+            return
+        for collection_name in ("_resources", "_templates"):
+            collection = getattr(manager, collection_name, None)
+            if not isinstance(collection, dict):
+                continue
+            for key in list(collection):
+                if str(key) == uri:
+                    collection.pop(key, None)
 
     def register_tool(
         self,
@@ -249,7 +302,12 @@ class ExtensionContext:
             if tool_name in self._registry.tool_names:
                 raise ExtensionError(f"duplicate MCP tool: {tool_name}")
             self._registry.tool_names.add(tool_name)
-            self._mcp.tool(name=tool_name, annotations=annotations)(candidate)
+            try:
+                self._mcp.tool(name=tool_name, annotations=annotations)(candidate)
+            except Exception:
+                self._remove_tool(tool_name)
+                raise
+            self._rollback_actions.append(lambda: self._remove_tool(tool_name))
             return candidate
 
         return install(function) if function is not None else install
@@ -266,7 +324,12 @@ class ExtensionContext:
             if uri in self._registry.resource_uris:
                 raise ExtensionError(f"duplicate MCP resource: {uri}")
             self._registry.resource_uris.add(uri)
-            self._mcp.resource(uri, name=name, mime_type=mime_type)(candidate)
+            try:
+                self._mcp.resource(uri, name=name, mime_type=mime_type)(candidate)
+            except Exception:
+                self._remove_resource(uri)
+                raise
+            self._rollback_actions.append(lambda: self._remove_resource(uri))
             return candidate
 
         return install(function) if function is not None else install

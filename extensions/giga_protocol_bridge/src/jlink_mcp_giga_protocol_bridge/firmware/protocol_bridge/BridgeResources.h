@@ -76,25 +76,36 @@ class SharedReceiveQueue {
     return true;
   }
 
-  size_t read(uint8_t protocol, uint8_t* output, size_t limit, bool drain) {
+  size_t read(uint8_t protocol, uint8_t channel, uint8_t* output, size_t limit,
+              bool drain) {
     Queue* queue = select(protocol);
     if (!queue || limit < sizeof(QueueRecordHeader)) return 0;
     size_t cursor = queue->tail;
     size_t remaining = queue->used;
+    size_t retained = 0;
     size_t written = 0;
     while (remaining >= sizeof(QueueRecordHeader)) {
       QueueRecordHeader header{};
       peek(*queue, cursor, reinterpret_cast<uint8_t*>(&header), sizeof(header));
       const size_t record_size = sizeof(header) + header.payload_length;
-      if (record_size > remaining || record_size > limit - written) break;
-      peek(*queue, cursor, output + written, record_size);
+      if (record_size > remaining) break;
+      if (header.channel == channel) {
+        if (record_size > limit - written) break;
+        peek(*queue, cursor, output + written, record_size);
+        written += record_size;
+      } else if (drain) {
+        copy(*queue, cursor, (queue->tail + retained) % kSliceSize,
+             record_size);
+        retained += record_size;
+      }
       cursor = (cursor + record_size) % kSliceSize;
       remaining -= record_size;
-      written += record_size;
     }
     if (drain) {
-      queue->tail = cursor;
-      queue->used = remaining;
+      copy(*queue, cursor, (queue->tail + retained) % kSliceSize, remaining);
+      retained += remaining;
+      queue->used = retained;
+      queue->head = (queue->tail + retained) % kSliceSize;
     }
     return written;
   }
@@ -102,6 +113,24 @@ class SharedReceiveQueue {
   uint32_t depth(uint8_t protocol) const {
     const Queue* queue = selectConst(protocol);
     return queue ? queue->used : 0;
+  }
+
+  uint32_t depth(uint8_t protocol, uint8_t channel) const {
+    const Queue* queue = selectConst(protocol);
+    if (!queue) return 0;
+    size_t cursor = queue->tail;
+    size_t remaining = queue->used;
+    uint32_t matched = 0;
+    while (remaining >= sizeof(QueueRecordHeader)) {
+      QueueRecordHeader header{};
+      peek(*queue, cursor, reinterpret_cast<uint8_t*>(&header), sizeof(header));
+      const size_t record_size = sizeof(header) + header.payload_length;
+      if (record_size > remaining) break;
+      if (header.channel == channel) matched += record_size;
+      cursor = (cursor + record_size) % kSliceSize;
+      remaining -= record_size;
+    }
+    return matched;
   }
 
   uint32_t overflow(uint8_t protocol) const {
@@ -138,6 +167,15 @@ class SharedReceiveQueue {
       queue.head = (queue.head + 1) % kSliceSize;
     }
     queue.used += length;
+  }
+
+  void copy(Queue& queue, size_t source, size_t destination, size_t length) {
+    for (size_t index = 0; index < length; ++index) {
+      const uint8_t value = storage_[offset(queue, source)];
+      storage_[offset(queue, destination)] = value;
+      source = (source + 1) % kSliceSize;
+      destination = (destination + 1) % kSliceSize;
+    }
   }
 
   void peek(const Queue& queue, size_t cursor, uint8_t* output, size_t length) const {

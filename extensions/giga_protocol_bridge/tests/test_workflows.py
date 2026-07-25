@@ -5,17 +5,20 @@ import json
 from pathlib import Path
 
 import pytest
-
-from jlink_mcp.extensions.api import ExtensionRegistry
-from jlink_mcp.models import Artifact, DeviceSelector
-from jlink_mcp.service import JLinkService
 from jlink_mcp_arduino_giga.profiles import GIGA_R1
 from jlink_mcp_arduino_giga.workflows import ArduinoGigaWorkflows
 from jlink_mcp_giga_protocol_bridge.backend import ProtocolBridgeBackend
 from jlink_mcp_giga_protocol_bridge.config import GigaProtocolBridgeConfig
 from jlink_mcp_giga_protocol_bridge.models import ProtocolBridgeStatus
 from jlink_mcp_giga_protocol_bridge.service import ProtocolBridgeService
-from jlink_mcp_giga_protocol_bridge.workflows import ProtocolBridgeWorkflows
+from jlink_mcp_giga_protocol_bridge.workflows import (
+    ProtocolBridgeDeployError,
+    ProtocolBridgeWorkflows,
+)
+
+from jlink_mcp.extensions.api import ExtensionRegistry
+from jlink_mcp.models import Artifact, DeviceSelector
+from jlink_mcp.service import JLinkService
 
 from .conftest import make_result
 
@@ -83,9 +86,7 @@ async def test_release_is_reproducible_and_fully_audited(
     assert second.command.ok and second.reproducible
     manifest = json.loads(
         (
-            Path(second.build_directory)
-            / "release"
-            / "protocol_bridge_manifest.json"
+            Path(second.build_directory) / "release" / "protocol_bridge_manifest.json"
         ).read_text(encoding="utf-8")
     )
     assert manifest["source_date_epoch"] == 1784937600
@@ -169,6 +170,68 @@ async def test_deploy_requires_backup_before_flash(
         "backup:0x8000000:0x200000",
         "flash:protocol_bridge_m7.hex",
         "handshake",
+    ]
+
+    async def restore_backup(path, address, expected_sha256, **kwargs):
+        events.append(f"restore:{address:#x}:{Path(path).name}")
+        assert expected_sha256 == backup.sha256
+        return {"ok": True, "backup_sha256": expected_sha256}
+
+    async def failed_flash(path, **kwargs):
+        events.append(f"flash-failed:{Path(path).name}")
+        return make_result(return_code=1)
+
+    monkeypatch.setattr(workflow.giga_workflows, "restore_backup", restore_backup)
+    monkeypatch.setattr(workflow.giga_workflows, "flash_and_verify", failed_flash)
+    events.clear()
+    with pytest.raises(
+        ProtocolBridgeDeployError, match="restoration verified"
+    ) as caught:
+        await workflow.deploy_protocol_bridge(selector=selector())
+    assert caught.value.backup == backup
+    assert caught.value.restore["ok"] is True
+    assert backup.path in str(caught.value)
+    assert backup.sha256 in str(caught.value)
+    assert events == [
+        "preflight:True",
+        "backup:0x8000000:0x200000",
+        "flash-failed:protocol_bridge_m7.hex",
+        "restore:0x8000000:original.bin",
+    ]
+
+    async def mismatched_status(**kwargs):
+        events.append("handshake-mismatch")
+        return ProtocolBridgeStatus(
+            firmware_version="wrong",
+            wire_version=1,
+            build_id="fixture",
+            source_sha256=source_sha,
+            supported_interfaces=["spi"],
+            safe_pins=["D22"],
+            transfer_limits={"application_payload": 64000},
+            command=make_result(),
+        )
+
+    async def failed_restore(*args, **kwargs):
+        events.append("restore-failed")
+        raise RuntimeError("probe disconnected during recovery")
+
+    monkeypatch.setattr(workflow.giga_workflows, "flash_and_verify", flash)
+    monkeypatch.setattr(workflow.bridge, "status", mismatched_status)
+    monkeypatch.setattr(workflow.giga_workflows, "restore_backup", failed_restore)
+    events.clear()
+    with pytest.raises(ProtocolBridgeDeployError, match="restoration raised") as caught:
+        await workflow.deploy_protocol_bridge(selector=selector())
+    assert caught.value.restore is None
+    assert "probe disconnected during recovery" in caught.value.restore_error
+    assert backup.path in str(caught.value)
+    assert backup.sha256 in str(caught.value)
+    assert events == [
+        "preflight:True",
+        "backup:0x8000000:0x200000",
+        "flash:protocol_bridge_m7.hex",
+        "handshake-mismatch",
+        "restore-failed",
     ]
 
     async def failed_backup(*args, **kwargs):

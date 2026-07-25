@@ -188,16 +188,18 @@ def test_profile_detector_tool_resource_capability_and_doctor_registration() -> 
         context.register_target_profile(profile)
         context.register_board_detector(
             "sample",
-            lambda usb: BoardCapabilities(
-                serial=usb.serial,
-                model="Sample",
-                target_profile="sample_target",
-                mcu="sample",
-                cores=["primary"],
-                usb=usb,
-            )
-            if usb.vendor_id == "1234"
-            else None,
+            lambda usb: (
+                BoardCapabilities(
+                    serial=usb.serial,
+                    model="Sample",
+                    target_profile="sample_target",
+                    mcu="sample",
+                    cores=["primary"],
+                    usb=usb,
+                )
+                if usb.vendor_id == "1234"
+                else None
+            ),
         )
 
         @context.register_tool(name="sample_tool")
@@ -211,9 +213,7 @@ def test_profile_detector_tool_resource_capability_and_doctor_registration() -> 
         context.register_capability_provider(
             lambda manifest: CapabilityContribution(
                 tools=[
-                    ToolAvailability(
-                        name="sample-cli", state=CapabilityState.AVAILABLE
-                    )
+                    ToolAvailability(name="sample-cli", state=CapabilityState.AVAILABLE)
                 ],
                 workflows={"sample_workflow": CapabilityState.AVAILABLE},
                 workflow_details={
@@ -243,9 +243,7 @@ def test_profile_detector_tool_resource_capability_and_doctor_registration() -> 
     manifest = registry.merge_capabilities(
         CapabilityManifest(host_os="test", host_arch="test")
     )
-    usb = USBDevice(
-        kind="usb", vendor_id="1234", product_id="5678", serial="stable"
-    )
+    usb = USBDevice(kind="usb", vendor_id="1234", product_id="5678", serial="stable")
 
     assert registry.targets.detect_board(usb).target_profile == "sample_target"
     assert mcp.tools["sample_tool"]() == "ok"
@@ -315,6 +313,127 @@ def test_incompatible_api_invalid_contract_config_and_initialization() -> None:
         manager([failing]).load()
 
 
+def test_failed_load_shuts_down_and_rolls_back_all_registrations() -> None:
+    events: list[str] = []
+    registry = ExtensionRegistry()
+    mcp = FakeMCP()
+
+    def profile(profile_id: str) -> TargetProfile:
+        return TargetProfile(
+            id=profile_id,
+            display_name=profile_id,
+            cores={
+                "core": CoreProfile(
+                    id="core",
+                    jlink_device=profile_id.upper(),
+                    expected_core="Test-Core",
+                    expected_cpuid=1,
+                )
+            },
+            default_core="core",
+            expected_dpidr=1,
+        )
+
+    def register_base(context) -> None:
+        context.register_target_profile(profile("base_profile"))
+        context.register_board_detector("board", lambda usb: None)
+        context.register_capability_provider(lambda manifest: CapabilityContribution())
+        context.register_dependency_provider(lambda manifest: [])
+        context.publish_service("service", object())
+        context.register_tool(lambda: None, name="base_tool")
+        context.register_resource("base://resource", lambda: None, name="base")
+
+    def register_failing(context) -> None:
+        context.register_target_profile(profile("partial_profile"))
+        context.register_board_detector("board", lambda usb: None)
+        context.register_capability_provider(lambda manifest: CapabilityContribution())
+        context.register_dependency_provider(lambda manifest: [])
+        context.publish_service("service", object())
+        context.register_tool(lambda: None, name="partial_tool")
+        context.register_resource("partial://resource", lambda: None, name="partial")
+        raise RuntimeError("partial registration failed")
+
+    base = FakeExtension("base", events, register=register_base)
+    failing = FakeExtension(
+        "failing",
+        events,
+        dependencies=("base",),
+        register=register_failing,
+    )
+    loaded = manager(
+        [base, failing],
+        enabled=["base", "failing"],
+        registry=registry,
+        mcp=mcp,
+    )
+
+    with pytest.raises(ExtensionError, match="partial registration failed"):
+        loaded.load()
+
+    assert events == [
+        "register:base:default",
+        "register:failing:default",
+        "shutdown:failing",
+        "shutdown:base",
+    ]
+    assert loaded.loaded_ids == []
+    assert registry.extension_infos == []
+    assert dict(registry.targets.profiles) == {}
+    assert dict(registry.targets.detectors) == {}
+    assert registry._capability_providers == []
+    assert registry._dependency_providers == []
+    assert registry._services == {}
+    assert mcp.tools == {}
+    assert mcp.resources == {}
+
+
+@pytest.mark.asyncio
+async def test_failed_load_rolls_back_inside_an_active_event_loop() -> None:
+    events: list[str] = []
+    registry = ExtensionRegistry()
+    mcp = FakeMCP()
+
+    def register_failing(context) -> None:
+        context.register_tool(lambda: None, name="partial_tool")
+        context.register_resource(
+            "partial://resource", lambda: None, name="partial"
+        )
+        raise RuntimeError("active-loop registration failed")
+
+    failing = FakeExtension("failing", events, register=register_failing)
+    loaded = manager([failing], registry=registry, mcp=mcp)
+
+    with pytest.raises(ExtensionError, match="active-loop registration failed"):
+        loaded.load()
+
+    assert events == ["register:failing:default", "shutdown:failing"]
+    assert loaded.loaded_ids == []
+    assert registry.extension_infos == []
+    assert mcp.tools == {}
+    assert mcp.resources == {}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_runs_all_hooks_and_reports_errors() -> None:
+    events: list[str] = []
+
+    class FailingShutdown(FakeExtension):
+        async def shutdown(self) -> None:
+            self.events.append(f"shutdown:{self.id}")
+            raise RuntimeError("shutdown failed")
+
+    failing = FailingShutdown("failing", events)
+    base = FakeExtension("base", events)
+    loaded = manager([failing, base])
+    loaded.load()
+
+    with pytest.raises(ExtensionError, match="failing: shutdown failed"):
+        await loaded.shutdown()
+
+    assert events[-2:] == ["shutdown:base", "shutdown:failing"]
+    assert loaded.loaded_ids == []
+
+
 def test_unsafe_config_permissions_fail(tmp_path: Path) -> None:
     path = tmp_path / "extensions.toml"
     path.write_text("[extensions.sample]\n", encoding="utf-8")
@@ -349,11 +468,11 @@ def test_registration_collisions_fail(collision: str) -> None:
         if collision == "tool":
             context.register_tool(lambda: None, name="taken_tool")
         elif collision == "resource":
-            context.register_resource(
-                "taken://resource", lambda: None, name="taken"
-            )
+            context.register_resource("taken://resource", lambda: None, name="taken")
         else:
-            context.register_target_profile(registry.targets.get_profile("taken_profile"))
+            context.register_target_profile(
+                registry.targets.get_profile("taken_profile")
+            )
 
     with pytest.raises(ExtensionError, match="initialization failed"):
         manager(

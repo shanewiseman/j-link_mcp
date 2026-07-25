@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import shutil
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
-from jlink_mcp.artifacts import registerable_artifact
-from jlink_mcp.models import Artifact, CommandResult
-from jlink_mcp_arduino_giga.models import DeviceSelector
 from jlink_mcp_arduino_giga.config import ArduinoGigaConfig
+from jlink_mcp_arduino_giga.models import DeviceSelector
 from jlink_mcp_arduino_giga.profiles import TargetCore
 from jlink_mcp_arduino_giga.workflows import ArduinoGigaWorkflows
+
+from jlink_mcp.artifacts import registerable_artifact
+from jlink_mcp.models import Artifact
 
 from .models import (
     BRIDGE_FIRMWARE_VERSION,
@@ -27,6 +26,32 @@ from .service import ProtocolBridgeService
 
 _BRIDGE_RELEASE_EPOCH = 1784937600
 _BRIDGE_RELEASE_TIMESTAMP = "2026-07-25T00:00:00Z"
+
+
+class ProtocolBridgeDeployError(RuntimeError):
+    """Deployment failure with an authorized backup and recovery outcome."""
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        backup: Artifact,
+        restore: dict[str, object] | None,
+        restore_error: str | None = None,
+    ) -> None:
+        self.backup = backup
+        self.restore = restore
+        self.restore_error = restore_error
+        if restore and restore.get("ok"):
+            outcome = "original flash restoration verified"
+        elif restore_error:
+            outcome = f"original flash restoration raised: {restore_error}"
+        else:
+            outcome = "original flash restoration failed verification"
+        super().__init__(
+            f"{reason}; {outcome}; authorized backup path={backup.path} "
+            f"sha256={backup.sha256}"
+        )
 
 
 class ProtocolBridgeWorkflows:
@@ -263,14 +288,18 @@ class ProtocolBridgeWorkflows:
         checksums_path = release / "SHA256SUMS"
         for path in (hex_path, manifest_path, checksums_path):
             if not path.is_file():
-                raise FileNotFoundError(f"protocol bridge release file is missing: {path}")
+                raise FileNotFoundError(
+                    f"protocol bridge release file is missing: {path}"
+                )
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         expected_source = self._protocol_bridge_source_sha256(release.parent)
         expected_hex = hashlib.sha256(hex_path.read_bytes()).hexdigest()
         if manifest.get("source_sha256") != expected_source:
             raise ValueError("protocol bridge release source hash is stale")
         if manifest.get("hex", {}).get("sha256") != expected_hex:
-            raise ValueError("protocol bridge release HEX hash does not match its manifest")
+            raise ValueError(
+                "protocol bridge release HEX hash does not match its manifest"
+            )
         checksum_lines = checksums_path.read_text(encoding="utf-8").splitlines()
         if f"{expected_hex}  {hex_path.name}" not in checksum_lines:
             raise ValueError("protocol bridge SHA256SUMS does not authorize the HEX")
@@ -279,33 +308,58 @@ class ProtocolBridgeWorkflows:
             selector=resolved, prepare_dual_core=True
         )
         if not preflight["ok"]:
-            raise RuntimeError("protocol bridge deployment stopped after failed preflight")
+            raise RuntimeError(
+                "protocol bridge deployment stopped after failed preflight"
+            )
         backup_result, backup = await self.giga_workflows.backup_flash(
             0x08000000, 0x200000, selector=resolved
         )
         if not backup_result.ok or backup is None:
-            raise RuntimeError("protocol bridge deployment requires a readable flash backup")
-        flash = await self.giga_workflows.flash_and_verify(
-            str(hex_path), selector=resolved
-        )
-        if not flash.ok:
             raise RuntimeError(
-                "protocol bridge flashing failed; retain and restore the returned backup"
+                "protocol bridge deployment requires a readable flash backup"
             )
-        firmware = registerable_artifact(hex_path, kind="protocol-bridge-release-hex")
-        firmware.metadata.update(manifest)
-        self.service.store.register_artifact(firmware)
-        handshake = await self.bridge.status(selector=resolved)
-        if (
-            handshake.firmware_version != manifest["firmware_version"]
-            or handshake.wire_version != manifest["wire_version"]
-            or handshake.source_sha256 != manifest["source_sha256"]
-        ):
-            raise RuntimeError("flashed protocol bridge identity does not match the release")
+        try:
+            flash = await self.giga_workflows.flash_and_verify(
+                str(hex_path), selector=resolved
+            )
+            if not flash.ok:
+                raise RuntimeError("protocol bridge flashing failed")
+            firmware = registerable_artifact(
+                hex_path, kind="protocol-bridge-release-hex"
+            )
+            firmware.metadata.update(manifest)
+            self.service.store.register_artifact(firmware)
+            handshake = await self.bridge.status(selector=resolved)
+            if (
+                handshake.firmware_version != manifest["firmware_version"]
+                or handshake.wire_version != manifest["wire_version"]
+                or handshake.source_sha256 != manifest["source_sha256"]
+            ):
+                raise RuntimeError(
+                    "flashed protocol bridge identity does not match the release"
+                )
+        # Post-backup recovery is mandatory even when the calling task is cancelled.
+        except BaseException as exc:
+            restore: dict[str, object] | None = None
+            restore_error: str | None = None
+            try:
+                restore = await self.giga_workflows.restore_backup(
+                    backup.path,
+                    0x08000000,
+                    backup.sha256,
+                    selector=resolved,
+                )
+            except BaseException as recovery_exc:  # noqa: BLE001
+                # Preserve the authorized backup even if cancellation recurs.
+                restore_error = f"{type(recovery_exc).__name__}: {recovery_exc}"
+            raise ProtocolBridgeDeployError(
+                str(exc),
+                backup=backup,
+                restore=restore,
+                restore_error=restore_error,
+            ) from exc
         return ProtocolBridgeDeployResult(
-            selector=DeviceSelector.model_validate(
-                resolved.model_dump(mode="python")
-            ),
+            selector=DeviceSelector.model_validate(resolved.model_dump(mode="python")),
             preflight=preflight,
             backup=backup,
             firmware=firmware,

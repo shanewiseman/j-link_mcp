@@ -12,6 +12,14 @@ positively identified M7 access port, and requires a version handshake. Use
 `protocol_bridge_exchange`, and `protocol_bridge_receive` for bounded actions.
 `build_protocol_bridge_release` rebuilds/compares the deterministic release.
 
+Receive queues are partitioned by protocol and selected by the request's
+`channel` (UART port, CAN bus, USB endpoint, Wi-Fi socket, BLE channel, or GPIO
+pin). A receive returns only complete records for that channel. With
+`drain=true`, only matching records actually returned within `limit` are
+removed; unmatched channels and the first record that does not fit remain in
+FIFO order. With `drain=false`, all records remain queued. Timeout and reported
+remaining depth are evaluated for the selected channel.
+
 Payloads cross MCP as canonical base64 and remain opaque. Resource ownership
 prevents conflicting pin/peripheral use. Safe GPIO pins are enumerated by the
 extension; voltage levels, current limits, external CAN transceivers,

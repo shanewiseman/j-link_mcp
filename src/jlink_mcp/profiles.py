@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -51,6 +52,19 @@ class TargetProfile:
             raise ValueError("target profile must declare at least one core")
         if self.default_core not in cores:
             raise ValueError("target profile default_core is not registered")
+        if (
+            not math.isfinite(self.minimum_target_voltage)
+            or self.minimum_target_voltage <= 0
+        ):
+            raise ValueError(
+                "target profile minimum_target_voltage must be finite and positive"
+            )
+        if not self.default_interface.strip():
+            raise ValueError("target profile default_interface must not be empty")
+        if not 5 <= self.default_speed_khz <= 50000:
+            raise ValueError(
+                "target profile default_speed_khz must be between 5 and 50000"
+            )
         for core_id, profile in cores.items():
             if core_id != profile.id:
                 raise ValueError("target profile core key must match CoreProfile.id")
@@ -81,10 +95,18 @@ class TargetRegistry:
             raise ValueError(f"duplicate target profile: {profile.id}")
         self._profiles[profile.id] = profile
 
-    def register_board_detector(self, detector_id: str, detector: BoardDetector) -> None:
+    def register_board_detector(
+        self, detector_id: str, detector: BoardDetector
+    ) -> None:
         if detector_id in self._detectors:
             raise ValueError(f"duplicate board detector: {detector_id}")
         self._detectors[detector_id] = detector
+
+    def unregister_profile(self, profile_id: str) -> None:
+        self._profiles.pop(profile_id, None)
+
+    def unregister_board_detector(self, detector_id: str) -> None:
+        self._detectors.pop(detector_id, None)
 
     def get_profile(self, profile_id: str) -> TargetProfile:
         try:
