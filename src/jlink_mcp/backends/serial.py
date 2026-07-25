@@ -176,10 +176,17 @@ class SerialBackend:
         except asyncio.CancelledError:
             # asyncio.to_thread cannot stop a running thread. Waiting here keeps
             # higher-level serialization locks held until the port context exits.
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                while current_task.cancelling():
+                    current_task.uncancel()
             while not worker.done():
                 try:
                     await asyncio.shield(worker)
                 except asyncio.CancelledError:
+                    if current_task is not None:
+                        while current_task.cancelling():
+                            current_task.uncancel()
                     continue
             if not worker.cancelled():
                 # Retrieve an exception so cancellation cannot leave task noise.

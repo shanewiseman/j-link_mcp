@@ -298,6 +298,11 @@ async def test_binary_serial_waits_for_worker_cleanup_on_cancellation(
     pending.cancel()
     await asyncio.sleep(0.01)
     assert not pending.done()
+    assert pending.cancelling() == 0
+    pending.cancel()
+    await asyncio.sleep(0.01)
+    assert not pending.done()
+    assert pending.cancelling() == 0
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await pending
