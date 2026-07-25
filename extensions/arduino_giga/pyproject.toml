@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jlink-mcp-arduino-giga"
+version = "0.1.0"
+description = "Arduino GIGA target extension for J-Link MCP"
+readme = "README.md"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.13"
+dependencies = ["jlink-mcp>=0.2.0,<1"]
+
+[project.entry-points."jlink_mcp.extensions"]
+arduino_giga = "jlink_mcp_arduino_giga:extension"
+
+[tool.uv.sources]
+jlink-mcp = { workspace = true }
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "pytest-cov>=6,<8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jlink_mcp_arduino_giga"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+  "hardware: requires an attached J-Link and Arduino GIGA",
+  "hil: exercises the MCP API against real target hardware",
+  "gui: requires Xvfb and installed SEGGER GUI tools",
+  "destructive: may change persistent target state",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["jlink_mcp_arduino_giga"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80

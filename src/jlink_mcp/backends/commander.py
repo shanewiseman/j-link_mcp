@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ..config import Settings
 from ..models import CommandResult, DeviceSelector, TargetState
-from ..profiles import jlink_device
+from ..profiles import TargetRegistry
 from ..runner import ProcessRunner
 from ..security import validate_raw_commands
 from .base import DebugBackend
@@ -108,9 +108,12 @@ def parse_commander_output(output: str) -> dict[str, object]:
 class CommanderBackend(DebugBackend):
     name = "jlink-commander"
 
-    def __init__(self, settings: Settings, runner: ProcessRunner) -> None:
+    def __init__(
+        self, settings: Settings, runner: ProcessRunner, targets: TargetRegistry
+    ) -> None:
         self.settings = settings
         self.runner = runner
+        self.targets = targets
 
     def _command_file(self, commands: Sequence[str]) -> Path:
         command_dir = self.settings.state_root / "commands"
@@ -145,7 +148,9 @@ class CommanderBackend(DebugBackend):
             argv.extend(
                 [
                     "-Device",
-                    jlink_device(selector.target_profile, selector.core),
+                    self.targets.jlink_device(
+                        selector.target_profile, selector.core
+                    ),
                     "-If",
                     selector.interface,
                     "-Speed",

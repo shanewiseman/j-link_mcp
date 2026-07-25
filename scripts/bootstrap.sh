@@ -17,4 +17,4 @@ if [ ! -s .token ]; then
 fi
 
 scripts/generate-hardware-env.sh
-echo "Bootstrap complete. Start with: docker compose --env-file .env.hardware up --build -d"
+echo "Core bootstrap complete. Start with: docker compose --env-file .env.hardware up --build -d"

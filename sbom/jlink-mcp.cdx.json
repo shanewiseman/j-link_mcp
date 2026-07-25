@@ -1382,44 +1382,6 @@
       "version": "12.3.0"
     },
     {
-      "bom-ref": "pip==24.0",
-      "description": "The PyPA recommended tool for installing Python packages.",
-      "externalReferences": [
-        {
-          "comment": "from packaging metadata Project-URL: Documentation",
-          "type": "documentation",
-          "url": "https://pip.pypa.io"
-        },
-        {
-          "comment": "from packaging metadata Project-URL: Source",
-          "type": "other",
-          "url": "https://github.com/pypa/pip"
-        },
-        {
-          "comment": "from packaging metadata Project-URL: Changelog",
-          "type": "release-notes",
-          "url": "https://pip.pypa.io/en/stable/news/"
-        },
-        {
-          "comment": "from packaging metadata Project-URL: Homepage",
-          "type": "website",
-          "url": "https://pip.pypa.io/"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "acknowledgement": "declared",
-            "id": "MIT"
-          }
-        }
-      ],
-      "name": "pip",
-      "purl": "pkg:pypi/pip@24.0",
-      "type": "library",
-      "version": "24.0"
-    },
-    {
       "bom-ref": "pip-licenses==5.5.5",
       "description": "Dump the software license list of Python packages installed with pip.",
       "externalReferences": [
@@ -2564,60 +2526,6 @@
       "version": "1.3.0"
     },
     {
-      "bom-ref": "uv==0.8.15",
-      "description": "An extremely fast Python package and project manager, written in Rust.",
-      "externalReferences": [
-        {
-          "comment": "from packaging metadata Project-URL: Documentation",
-          "type": "documentation",
-          "url": "https://docs.astral.sh/uv"
-        },
-        {
-          "comment": "from packaging metadata Project-URL: Discord",
-          "type": "other",
-          "url": "https://discord.gg/astral-sh"
-        },
-        {
-          "comment": "from packaging metadata Project-URL: Releases",
-          "type": "other",
-          "url": "https://github.com/astral-sh/uv/releases"
-        },
-        {
-          "comment": "from packaging metadata Project-URL: Changelog",
-          "type": "release-notes",
-          "url": "https://github.com/astral-sh/uv/blob/main/CHANGELOG.md"
-        },
-        {
-          "comment": "from packaging metadata Project-URL: Repository",
-          "type": "vcs",
-          "url": "https://github.com/astral-sh/uv"
-        },
-        {
-          "comment": "from packaging metadata: Home-page",
-          "type": "website",
-          "url": "https://pypi.org/project/uv/"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "acknowledgement": "declared",
-            "id": "MIT"
-          }
-        },
-        {
-          "license": {
-            "acknowledgement": "declared",
-            "name": "License :: OSI Approved :: Apache Software License"
-          }
-        }
-      ],
-      "name": "uv",
-      "purl": "pkg:pypi/uv@0.8.15",
-      "type": "library",
-      "version": "0.8.15"
-    },
-    {
       "bom-ref": "uvicorn==0.51.0",
       "description": "The lightning-fast ASGI server.",
       "externalReferences": [
@@ -3082,9 +2990,6 @@
       "ref": "pip-requirements-parser==32.0.1"
     },
     {
-      "ref": "pip==24.0"
-    },
-    {
       "dependsOn": [
         "coverage==7.15.2",
         "pytest==9.1.1"
@@ -3287,9 +3192,6 @@
       "ref": "uri-template==1.3.0"
     },
     {
-      "ref": "uv==0.8.15"
-    },
-    {
       "dependsOn": [
         "PyYAML==6.0.3",
         "click==8.4.2",
@@ -3339,7 +3241,7 @@
       ],
       "name": "jlink-mcp",
       "type": "application",
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     "properties": [
       {

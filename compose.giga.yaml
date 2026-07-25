@@ -1,0 +1,17 @@
+services:
+  mcp:
+    image: jlink-mcp-giga:local
+    build:
+      context: .
+      dockerfile: extensions/arduino_giga/Dockerfile
+      args:
+        CORE_IMAGE: "jlink-mcp:local"
+    group_add:
+      - "${DIALOUT_GID:-20}"
+    device_cgroup_rules:
+      - "c 166:* rwm"
+      - "c 188:* rwm"
+    environment:
+      JLINK_MCP_EXTENSIONS: arduino_giga,giga_protocol_bridge
+      JLINK_MCP_EXT_ARDUINO_GIGA__TEST_TARGET_DISPOSABLE: "${TEST_TARGET_DISPOSABLE:-false}"
+      JLINK_MCP_EXT_GIGA_PROTOCOL_BRIDGE__PROFILES_FILE: "${JLINK_MCP_BRIDGE_PROFILES_FILE:-}"

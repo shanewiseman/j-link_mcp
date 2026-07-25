@@ -1,0 +1,24 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "jlink-mcp-arduino-giga-build-stack"
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "arduino-cli",
+      "version": "1.5.1",
+      "purl": "pkg:github/arduino/arduino-cli@1.5.1"
+    },
+    {
+      "type": "framework",
+      "name": "arduino:mbed_giga",
+      "version": "4.6.0"
+    }
+  ]
+}

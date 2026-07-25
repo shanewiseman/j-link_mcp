@@ -1,12 +1,3 @@
 # J-Link probes: libusb access for members of plugdev.  Final assignments are
-# intentional: SEGGER and Arduino packages may install later world-writable
-# rules.  This file is named 59-* so it wins before Arduino's MODE:="0666"
-# rule, which cannot be overridden once evaluated.
+# intentional so later vendor packages cannot weaken probe permissions.
 SUBSYSTEM=="usb", ATTR{idVendor}=="1366", MODE:="0660", GROUP:="plugdev", TAG+="uaccess"
-
-# Arduino boards: USB identity and CDC ACM serial access.
-SUBSYSTEM=="usb", ATTR{idVendor}=="2341", MODE:="0660", GROUP:="plugdev", TAG+="uaccess"
-SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="2341", MODE:="0660", GROUP:="dialout", TAG+="uaccess"
-
-# Generic USB-serial adapters used by supported targets.
-SUBSYSTEM=="tty", KERNEL=="ttyUSB*", MODE:="0660", GROUP:="dialout", TAG+="uaccess"

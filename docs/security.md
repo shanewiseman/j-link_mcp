@@ -1,72 +1,26 @@
 # Security model
 
-## Trust boundaries
+The service is designed for a local trusted operator, not exposure to an
+untrusted network. It binds to loopback, requires a bearer token, runs non-root,
+drops Linux capabilities, uses `no-new-privileges`, and keeps the root
+filesystem read-only apart from explicit workspace/state/tmpfs mounts.
 
-The MCP client and configured workspace are trusted to request target changes.
-The network, raw tool inputs, artifact paths, USB enumeration, debugger output,
-and GUI state are untrusted. SEGGER programs are trusted only as locally
-installed licensed binaries mounted read-only.
+Target-changing operations require a registered profile, stable selection,
+live positive identity, and an exclusive probe lease. Raw Commander, GDB, and
+SEGGER application inputs use finite validators, reject shell/host-code escape
+facilities, bound counts and sizes, and confine file operands to workspace or
+state. Audit entries include failures and form a verifiable hash chain.
 
-The service intentionally exposes destructive target operations without
-per-command confirmation after one-time setup. Safety comes from loopback
-binding, bearer authentication, stable physical selection, live positive
-target identity, exclusive leases, path confinement, fixed executable
-allowlists, and immutable audit evidence—not from interactive prompts.
+SEGGER software is proprietary, user-supplied, and mounted read-only. It is not
+copied into source, wheels, images, SBOMs, or reports.
 
-## Container controls
+Extensions are a trust boundary: an installed extension is inert until
+allowlisted, but once activated it executes as trusted in-process Python with
+the service's authority. The allowlist does not sandbox it. Review extension
+code and dependencies, pin versions, restrict configuration to mode `0600`,
+and enable only known IDs. Process isolation is deferred beyond API version 1.
 
-- Runs as the host UID/GID, never root.
-- `cap_drop: [ALL]`, read-only root filesystem, no privileged mode.
-- USB/ACM/USB-serial cgroup classes only: majors 189, 166, and 188.
-- `/dev/bus/usb` is writable for libusb; host `/dev` and USB sysfs are
-  read-only discovery views.
-- Workspace and state are the only writable bind mounts; `/tmp` and `/run` are
-  size-limited `noexec,nosuid,nodev` tmpfs mounts.
-- SEGGER, Ozone, and SystemView (when configured) are read-only mounts.
-- The service listens at `127.0.0.1:8000`; health is public but all MCP traffic
-  requires a constant-time bearer-token comparison.
-- Compose normally enables `no-new-privileges`. `compose.snap.yaml` removes
-  only that option because the Canonical snap runtime rejects initial exec;
-  all other controls remain. Prefer standard Docker Engine where possible.
-
-## Raw-input policy
-
-No backend uses `shell=True`. Commander command names must be syntactically
-valid and cannot contain `;&|` backticks, substitutions, redirection, control
-characters, or unconstrained paths. GDB accepts a strict MI/CLI allowlist,
-supports debugger expressions, and rejects shell, Python, Guile, source,
-pipe, command-definition, environment, sysroot, and executable-loading
-escapes. `-interpreter-exec` is limited to quoted `monitor` commands.
-
-Application names come from the installed SEGGER tool allowlist. Each path
-operand—also `--option=/path` forms—must resolve beneath workspace or state.
-Symlink resolution is strict for existing paths, preventing traversal.
-
-## Target-changing policy
-
-Before Commander, GDB, GUI, or destructive SEGGER application use, the service
-checks the selected probe serial, SW-DP ID, core CPUID, and VTref >= 1.0 V.
-Ambiguous selection and stale/unverified board identities fail closed. The
-primary GIGA suite never tests irreversible readout protection, option-byte
-provisioning, or mass erase; those paths are covered with mocks only.
-
-## Secrets and evidence
-
-`.token`, `.env.hardware`, local state, and SEGGER runtime copies are ignored
-by Git and excluded from the Docker build context. Token files are mode 0600.
-Audits deliberately record commands and hashes but callers must not place
-secrets in firmware filenames or raw debug commands. The audit hash chain
-detects mutation; it is not a substitute for signing or off-host retention.
-
-Report suspected vulnerabilities privately to the repository owner. Rotate
-the token, stop the container, preserve `state/`, and verify the audit chain
-before restarting after an incident.
-
-Bridge Wi-Fi credentials and BLE passkeys are accepted only by name from the
-mode-`0600` `JLINK_MCP_BRIDGE_PROFILES_FILE`. Secret values are resolved only
-for the specific control request, omitted from command/result/error/audit and
-artifact serialization, and kept volatile in firmware. Opaque bridge payloads
-are represented as canonical base64 at the MCP boundary; binary serial audits
-record only sizes and SHA-256 hashes. The wire decoder rejects unknown or
-duplicate TLVs, invalid CRC/version/length values, and stale or out-of-order
-segments before dispatch.
+Physical safety remains operator-owned. A profile proves digital identity, not
+wiring correctness, voltage-domain compatibility, current limits, radio policy,
+or the presence of external transceivers. Follow extension-specific contracts
+before connecting or driving hardware.
