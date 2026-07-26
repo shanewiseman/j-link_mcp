@@ -7,7 +7,7 @@ cd "$repository_dir"
 mkdir -p artifacts
 export COVERAGE_FILE=artifacts/.coverage-core
 
-.venv/bin/python -m pytest \
+exec .venv/bin/python -m pytest \
   tests \
   --ignore=tests/container \
   --basetemp=.ci-cache/pytest-core \
@@ -18,6 +18,3 @@ export COVERAGE_FILE=artifacts/.coverage-core
   --cov-report=term-missing \
   --cov-report=xml:artifacts/coverage-core.xml \
   --cov-fail-under=80
-
-echo "Intentional Jenkins gate probe: core test failure" >&2
-exit 93
