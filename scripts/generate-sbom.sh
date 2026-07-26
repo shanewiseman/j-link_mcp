@@ -15,7 +15,9 @@ fi
 
 output_dir=${1:-sbom}
 mkdir -p "$output_dir"
-inventory_dir=$(mktemp -d /tmp/jlink-mcp-core-sbom.XXXXXX)
+mkdir -p "$repository_dir/.ci-cache"
+inventory_dir=$(mktemp -d \
+  "$repository_dir/.ci-cache/jlink-mcp-core-sbom.XXXXXX")
 trap 'rm -r -- "$inventory_dir"' EXIT HUP INT TERM
 UV_PROJECT_ENVIRONMENT="$inventory_dir/venv" "$uv_command" sync \
   --frozen --offline --package jlink-mcp --extra gui --extra sbom --no-editable

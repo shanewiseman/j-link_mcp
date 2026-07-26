@@ -128,6 +128,16 @@ def test_segger_version_release_notes_and_groups(tmp_path: Path, monkeypatch) ->
     assert discovery.current_groups() == {"plugdev"}
 
 
+def test_current_groups_preserves_unmapped_container_gid(monkeypatch) -> None:
+    monkeypatch.setattr(discovery.os, "getgroups", lambda: [1000])
+    monkeypatch.setattr(
+        discovery.grp,
+        "getgrgid",
+        lambda gid: (_ for _ in ()).throw(KeyError(gid)),
+    )
+    assert discovery.current_groups() == {"gid:1000"}
+
+
 def test_dependency_doctor_full_matrix(
     settings, manifest, monkeypatch, tmp_path: Path, target_registry
 ) -> None:

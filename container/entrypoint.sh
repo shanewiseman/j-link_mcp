@@ -12,4 +12,6 @@ if [ "${JLINK_MCP_ENABLE_NOVNC:-false}" = "true" ]; then
 fi
 
 export NO_AT_BRIDGE=0
+JLINK_MCP_TOKEN_FILE=${JLINK_MCP_TOKEN_FILE:-/run/secrets/jlink_mcp_token}
+export JLINK_MCP_TOKEN_FILE
 exec /usr/bin/tini -- dbus-run-session -- "$@"

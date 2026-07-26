@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 
-import pytest
 from jlink_mcp_arduino_giga import artifacts
 from jlink_mcp_arduino_giga.artifacts import finalize_fixture_elf, verify_fixture_elf
 
@@ -12,29 +10,9 @@ from jlink_mcp.artifacts import inspect_elf
 
 
 def _build_synthetic_fixture(tmp_path: Path) -> Path:
-    cc = shutil.which("cc")
-    ld = shutil.which("ld")
-    if not cc or not ld:
-        pytest.skip("native compiler/linker unavailable")
-    source = tmp_path / "fixture.c"
-    source.write_text(
-        '__attribute__((section(".manifest"))) unsigned char jlink_mcp_manifest[200];\n'
-        '__attribute__((section(".ram"))) unsigned char jlink_mcp_test_buffer[32];\n'
-        '__attribute__((section(".rtt"))) unsigned char _SEGGER_RTT[64];\n'
-        "void jlink_mcp_breakpoint_site(void) {}\n",
-        encoding="utf-8",
-    )
-    script = tmp_path / "fixture.ld"
-    script.write_text(
-        "SECTIONS { . = 0x08000000; .text : { *(.text*) } "
-        ".manifest : { *(.manifest) } . = 0x24000000; "
-        ".ram : { *(.ram) *(.rtt) } }\n",
-        encoding="utf-8",
-    )
-    obj = tmp_path / "fixture.o"
     elf = tmp_path / "fixture.elf"
-    subprocess.run([cc, "-c", str(source), "-o", str(obj)], check=True)
-    subprocess.run([ld, "-T", str(script), str(obj), "-o", str(elf)], check=True)
+    fixture = Path(__file__).parent / "fixtures/synthetic_fixture.elf"
+    shutil.copyfile(fixture, elf)
     return elf
 
 
