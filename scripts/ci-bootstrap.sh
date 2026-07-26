@@ -18,7 +18,10 @@ if [ ! -f uv.lock ]; then
   exit 1
 fi
 
-exec "$uv_command" sync \
+"$uv_command" sync \
   --frozen \
   --all-packages \
   --all-extras
+
+mkdir -p artifacts/sbom.cdx.json
+echo "Created the intentional Jenkins SBOM output-path probe"
