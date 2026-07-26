@@ -18,5 +18,3 @@ cp extensions/arduino_giga/sbom/arduino-platform.cdx.json \
 cp extensions/giga_protocol_bridge/sbom/arduino-libraries.cdx.json \
   "$output_dir/arduino-libraries.cdx.json"
 echo "Validated and staged core and extension CycloneDX inventories"
-echo "Intentional Jenkins gate probe: repository SBOM failure" >&2
-exit 96
