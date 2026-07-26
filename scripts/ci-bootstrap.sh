@@ -18,10 +18,7 @@ if [ ! -f uv.lock ]; then
   exit 1
 fi
 
-"$uv_command" sync \
+exec "$uv_command" sync \
   --frozen \
   --all-packages \
   --all-extras
-
-echo "Intentional Jenkins gate probe: bootstrap failure" >&2
-exit 91
