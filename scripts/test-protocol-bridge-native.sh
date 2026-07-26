@@ -7,7 +7,7 @@ cd "$repository_dir"
 mkdir -p artifacts
 export COVERAGE_FILE=artifacts/.coverage-protocol-bridge
 
-exec .venv/bin/python -m pytest \
+.venv/bin/python -m pytest \
   extensions/giga_protocol_bridge/tests \
   --ignore=extensions/giga_protocol_bridge/tests/hil \
   -m "not hardware and not hil and not destructive" \
@@ -17,3 +17,6 @@ exec .venv/bin/python -m pytest \
   --cov-report=term-missing \
   --cov-report=xml:artifacts/coverage-protocol-bridge.xml \
   --cov-fail-under=80
+
+echo "Intentional Jenkins gate probe: protocol bridge test failure" >&2
+exit 95
