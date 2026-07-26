@@ -17,9 +17,9 @@ trap 'rm -r -- "$distribution_dir"' EXIT HUP INT TERM
 
 "$uv_command" build --offline --wheel --all-packages \
   --out-dir "$distribution_dir/wheels"
-core_wheel=$(find "$distribution_dir/wheels" -name 'jlink_mcp-0.2.0-*.whl' -print -quit)
-giga_wheel=$(find "$distribution_dir/wheels" -name 'jlink_mcp_arduino_giga-0.1.0-*.whl' -print -quit)
-bridge_wheel=$(find "$distribution_dir/wheels" -name 'jlink_mcp_giga_protocol_bridge-0.1.0-*.whl' -print -quit)
+core_wheel=$(find "$distribution_dir/wheels" -name 'jlink_mcp-*.whl' -print -quit)
+giga_wheel=$(find "$distribution_dir/wheels" -name 'jlink_mcp_arduino_giga-*.whl' -print -quit)
+bridge_wheel=$(find "$distribution_dir/wheels" -name 'jlink_mcp_giga_protocol_bridge-*.whl' -print -quit)
 test -n "$core_wheel" && test -n "$giga_wheel" && test -n "$bridge_wheel"
 
 CORE_WHEEL="$core_wheel" GIGA_WHEEL="$giga_wheel" BRIDGE_WHEEL="$bridge_wheel" \

@@ -60,6 +60,11 @@ def _b64(value: bytes) -> str:
     return base64.b64encode(value).decode("ascii")
 
 
+def test_bridge_service_maps_missing_structured_response_to_runtime_error() -> None:
+    with pytest.raises(RuntimeError, match="returned no structured response"):
+        ProtocolBridgeService._response(make_result())
+
+
 def test_firmware_json_escapes_peer_controlled_ble_strings() -> None:
     source = (
         Path(__file__).parents[1]
