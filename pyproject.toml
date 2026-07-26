@@ -13,7 +13,7 @@ requires-python = ">=3.12,<3.13"
 authors = [{ name = "j-link_mcp contributors" }]
 dependencies = [
   "httpx>=0.28,<1",
-  "mcp==1.27.2,<2",
+  "mcp==1.28.1,<2",
   "psutil>=6,<8",
   "pydantic-settings>=2.5,<3",
   "pyelftools>=0.32,<1",

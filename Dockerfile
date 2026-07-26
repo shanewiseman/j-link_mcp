@@ -85,7 +85,6 @@ ENV HOME=/segger-state \
     JLINK_MCP_SYS_USB_ROOT=/sys/bus/usb/devices \
     JLINK_MCP_GDB_CLIENT=/usr/bin/gdb-multiarch \
     JLINK_MCP_EXTENSIONS= \
-    JLINK_MCP_TOKEN_FILE=/run/secrets/jlink_mcp_token \
     JLINK_MCP_HOST=127.0.0.1 \
     JLINK_MCP_PORT=8000 \
     DISPLAY=:99

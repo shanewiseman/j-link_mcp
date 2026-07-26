@@ -455,5 +455,13 @@ def _tools_state(available: set[str], names: set[str]) -> CapabilityState:
 
 
 def current_groups() -> set[str]:
-    group_ids = os.getgroups()
-    return {grp.getgrgid(group_id).gr_name for group_id in group_ids}
+    groups: set[str] = set()
+    for group_id in os.getgroups():
+        try:
+            groups.add(grp.getgrgid(group_id).gr_name)
+        except (KeyError, OSError):
+            # Containers commonly run with the host UID/GID while omitting
+            # matching passwd/group entries. Preserve the observed identity
+            # without treating the missing NSS record as a runtime failure.
+            groups.add(f"gid:{group_id}")
+    return groups
