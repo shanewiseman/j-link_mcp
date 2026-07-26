@@ -94,7 +94,7 @@ class ProtocolBridgeService:
             raise RuntimeError(result.stderr or "protocol bridge request failed")
         response = result.parsed.get("bridge")
         if not isinstance(response, dict):
-            raise RuntimeError("protocol bridge returned no structured response")
+            raise TypeError("protocol bridge returned no structured response")
         return response
 
     async def status(

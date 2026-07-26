@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from ..config import Settings
 from ..discovery import SEGGER_TOOLS
 from ..models import CommandResult

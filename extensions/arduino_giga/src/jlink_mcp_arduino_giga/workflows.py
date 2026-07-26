@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import re
@@ -12,10 +13,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .artifacts import (
-    finalize_fixture_elf,
-    verify_fixture_elf,
-)
 from jlink_mcp.artifacts import inspect_elf, registerable_artifact
 from jlink_mcp.models import (
     Artifact,
@@ -25,12 +22,17 @@ from jlink_mcp.models import (
 from jlink_mcp.service import JLinkService
 from jlink_mcp.workflows import Workflows
 
+from .artifacts import (
+    finalize_fixture_elf,
+    verify_fixture_elf,
+)
 from .config import ArduinoGigaConfig
 from .models import BuildResult, DeviceSelector, ValidationReport
-from .profiles import get_profile
-from .profiles import TargetCore
+from .profiles import TargetCore, get_profile
 
 _PROPERTY_RE = re.compile(r"^([^=\s]+)=(.*)$")
+
+
 class ArduinoGigaWorkflows(Workflows):
     def __init__(self, service: JLinkService, config: ArduinoGigaConfig) -> None:
         super().__init__(service)
@@ -189,17 +191,17 @@ class ArduinoGigaWorkflows(Workflows):
             relative = requested.relative_to(legacy_root)
         except ValueError:
             return self.settings.resolve_workspace_path(sketch)
-        packaged_root = (
-            Path(__file__).parent / "firmware" / "giga_hil"
-        ).resolve(strict=True)
+        packaged_root = (Path(__file__).parent / "firmware" / "giga_hil").resolve(
+            strict=True
+        )
         packaged = (packaged_root / relative).resolve()
         if not packaged.is_relative_to(packaged_root):
             raise ValueError("packaged sketch path escapes fixture root")
         return packaged.resolve(strict=True)
 
     async def _build_identity(self) -> dict[str, str]:
-        timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
-            "+00:00", "Z"
+        timestamp = (
+            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         )
         revision = await self.service.runner.run(
             ["git", "rev-parse", "--verify", "HEAD"],
@@ -227,7 +229,11 @@ class ArduinoGigaWorkflows(Workflows):
         for path in sorted(self.settings.repository_root.rglob("*")):
             if not path.is_file() or any(part in excluded for part in path.parts):
                 continue
-            if path.name == ".token" or path.name == ".env" or path.name.startswith(".env."):
+            if (
+                path.name == ".token"
+                or path.name == ".env"
+                or path.name.startswith(".env.")
+            ):
                 continue
             relative = path.relative_to(self.settings.repository_root).as_posix()
             digest.update(relative.encode("utf-8") + b"\0")
@@ -514,7 +520,9 @@ class ArduinoGigaWorkflows(Workflows):
     @staticmethod
     def _build_artifact(build: BuildResult, kind: str) -> Artifact:
         try:
-            return next(artifact for artifact in build.artifacts if artifact.kind == kind)
+            return next(
+                artifact for artifact in build.artifacts if artifact.kind == kind
+            )
         except StopIteration as exc:
             raise RuntimeError(f"build produced no {kind} artifact") from exc
 
@@ -592,9 +600,7 @@ class ArduinoGigaWorkflows(Workflows):
         # M7 owns M4 boot through Arduino RPC/OpenAMP. An independent M4 reset
         # races that handshake. A reset-pin system reset gives both cores a
         # cold start, after which M7 boots M4 from the configured split image.
-        reset_system = await self.service.reset(
-            m7, halt=False, reset_type=2
-        )
+        reset_system = await self.service.reset(m7, halt=False, reset_type=2)
         observations: dict[str, CommandResult] = {}
         for request in ("PING", "MANIFEST", "INFO", "SELFTEST", "RPC"):
             observations[request.lower()] = await self.service.serial_exchange(
@@ -611,13 +617,9 @@ class ArduinoGigaWorkflows(Workflows):
                 "test_symbols"
             ]
             heartbeat = int(symbols["jlink_mcp_heartbeat"]["address"])
-            first = await self.service.read_memory(
-                heartbeat, selector=core_selector
-            )
+            first = await self.service.read_memory(heartbeat, selector=core_selector)
             await asyncio.sleep(0.4)
-            second = await self.service.read_memory(
-                heartbeat, selector=core_selector
-            )
+            second = await self.service.read_memory(heartbeat, selector=core_selector)
             memory[core] = [first, second]
         records = {
             name: result.parsed.get("records", [])
@@ -639,8 +641,7 @@ class ArduinoGigaWorkflows(Workflows):
             return values[1] > values[0]
 
         heartbeat_progress = {
-            core: heartbeat_progressed(samples)
-            for core, samples in memory.items()
+            core: heartbeat_progressed(samples) for core, samples in memory.items()
         }
         return {
             "ok": reset_system.ok
@@ -649,8 +650,7 @@ class ArduinoGigaWorkflows(Workflows):
             and any(record.get("event") == "pong" for record in records["ping"])
             and any(record.get("ok") is True for record in records["selftest"])
             and any(
-                int(record.get("m4_heartbeat", 0)) > 0
-                for record in records["rpc"]
+                int(record.get("m4_heartbeat", 0)) > 0 for record in records["rpc"]
             ),
             "selector": resolved.model_dump(mode="json"),
             "reset_system": reset_system.model_dump(mode="json"),
@@ -679,9 +679,7 @@ class ArduinoGigaWorkflows(Workflows):
         commands: list[CommandResult] = []
 
         async def command(text: str, timeout: float = 15) -> CommandResult:
-            result = await self.service.gdb_command(
-                session_id, text, timeout=timeout
-            )
+            result = await self.service.gdb_command(session_id, text, timeout=timeout)
             commands.append(result)
             return result
 
@@ -837,8 +835,7 @@ class ArduinoGigaWorkflows(Workflows):
                 for frame in (item.get("payload") or {}).get("stack", [])
             ]
             hardfault_frame = any(
-                "HardFault_Handler" in str(frame.get("func", ""))
-                for frame in frames
+                "HardFault_Handler" in str(frame.get("func", "")) for frame in frames
             )
             return {
                 "ok": trigger.ok
@@ -864,10 +861,8 @@ class ArduinoGigaWorkflows(Workflows):
                     '-interpreter-exec console "monitor reset"',
                     '-interpreter-exec console "monitor go"',
                 ):
-                    try:
+                    with contextlib.suppress(Exception):
                         await self.service.gdb_command(session_id, text)
-                    except Exception:
-                        pass
             await self.service.stop_gdb(session_id, resume=False)
             await asyncio.sleep(1.0)
 
@@ -880,9 +875,7 @@ class ArduinoGigaWorkflows(Workflows):
     ) -> dict[str, Any]:
         path = self.settings.resolve_allowed_path(artifact_path)
         artifact = registerable_artifact(path, kind="comparison-input")
-        result = await self.service.verify_binary(
-            str(path), address, selector=selector
-        )
+        result = await self.service.verify_binary(str(path), address, selector=selector)
         result.artifact_hashes[str(path)] = artifact.sha256
         self.service.store.register_artifact(artifact)
         return {
@@ -922,7 +915,9 @@ class ArduinoGigaWorkflows(Workflows):
         result = await self.service.verify_binary(
             str(destination), address, selector=selector
         )
-        result.artifact_hashes[str(source)] = hashlib.sha256(source.read_bytes()).hexdigest()
+        result.artifact_hashes[str(source)] = hashlib.sha256(
+            source.read_bytes()
+        ).hexdigest()
         result.artifact_hashes[str(destination)] = artifact.sha256
         return {
             "match": result.ok,
@@ -953,7 +948,9 @@ class ArduinoGigaWorkflows(Workflows):
         try:
             rtt_address = int(symbols["_SEGGER_RTT"]["address"])
         except KeyError as exc:
-            raise ValueError("ELF does not contain a concrete _SEGGER_RTT symbol") from exc
+            raise ValueError(
+                "ELF does not contain a concrete _SEGGER_RTT symbol"
+            ) from exc
         destination = (
             self.settings.state_root
             / "artifacts"
@@ -975,7 +972,7 @@ class ArduinoGigaWorkflows(Workflows):
             try:
                 configuration = await self.service.gdb_command(
                     session_id,
-                    '-interpreter-exec console '
+                    "-interpreter-exec console "
                     f'"monitor exec SetRTTAddr=0x{rtt_address:08X}"',
                 )
                 if not configuration.ok:
@@ -1143,9 +1140,9 @@ class ArduinoGigaWorkflows(Workflows):
             {
                 str(path)
                 for operation in operations
-                for path in operation["payload"].get("result", {}).get(
-                    "evidence_paths", []
-                )
+                for path in operation["payload"]
+                .get("result", {})
+                .get("evidence_paths", [])
             }
         )
         screenshot_paths = [
@@ -1162,8 +1159,10 @@ class ArduinoGigaWorkflows(Workflows):
             f"- Registered artifacts: `{len(artifact_catalog)}`",
             f"- Screenshot evidence: `{len(screenshot_paths)}`",
             "",
-            "The JSON companion is the lossless record and contains complete raw output, "
-            "requests, identities, audit hashes, and structured values.",
+            (
+                "The JSON companion is the lossless record and contains complete raw output, "
+                "requests, identities, audit hashes, and structured values."
+            ),
             "",
             "## Hardware evidence",
             "",
@@ -1397,7 +1396,9 @@ class ArduinoGigaWorkflows(Workflows):
                 selector=resolved, m7_elf_path=m7_elf, m4_elf_path=m4_elf
             )
             steps.append(
-                ValidationStep(name="boot_and_observe", ok=observe["ok"], details=observe)
+                ValidationStep(
+                    name="boot_and_observe", ok=observe["ok"], details=observe
+                )
             )
             debug = await self.debug_fixture(m7_elf, selector=resolved)
             steps.append(
@@ -1407,7 +1408,7 @@ class ArduinoGigaWorkflows(Workflows):
             steps.append(
                 ValidationStep(name="controlled_crash", ok=crash["ok"], details=crash)
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- every validation failure is reported
             steps.append(
                 ValidationStep(
                     name="validation_exception",
@@ -1430,7 +1431,7 @@ class ArduinoGigaWorkflows(Workflows):
                             name="restore_original_flash", ok=restored, details=restore
                         )
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 -- restoration evidence must survive
                     steps.append(
                         ValidationStep(
                             name="restore_original_flash",

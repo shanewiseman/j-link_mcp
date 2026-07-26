@@ -48,7 +48,7 @@ class CapabilityContribution(BaseModel):
 
 CapabilityProvider = Callable[[CapabilityManifest], CapabilityContribution]
 DependencyProvider = Callable[[CapabilityManifest], Sequence[DependencyCheck]]
-ShutdownHook = Callable[[], None | Awaitable[None]]
+ShutdownHook = Callable[[], Awaitable[None] | None]
 
 
 @runtime_checkable
@@ -63,7 +63,7 @@ class Extension(Protocol):
 
     def register(self, context: ExtensionContext) -> None: ...
 
-    def shutdown(self) -> None | Awaitable[None]: ...
+    def shutdown(self) -> Awaitable[None] | None: ...
 
 
 @dataclass(frozen=True, slots=True)

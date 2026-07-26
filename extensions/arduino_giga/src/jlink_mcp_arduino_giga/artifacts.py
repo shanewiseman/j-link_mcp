@@ -102,9 +102,7 @@ def finalize_fixture_elf(path: Path) -> dict[str, int | str]:
     # zero for the checksum calculation.
     _, flash_image, _, _ = _layout_from_blob(blob)
     crc32 = zlib.crc32(flash_image) & 0xFFFFFFFF
-    struct.pack_into(
-        "<I", blob, manifest_file_offset + _MANIFEST_CRC_OFFSET, crc32
-    )
+    struct.pack_into("<I", blob, manifest_file_offset + _MANIFEST_CRC_OFFSET, crc32)
     path.write_bytes(blob)
     return {
         "manifest_address": f"0x{manifest_address:08X}",
@@ -150,14 +148,20 @@ def _manifest_location(blob: bytes | bytearray) -> tuple[int, int, int]:
         if table is None:
             raise ValueError("ELF has no symbol table")
         symbol = next(
-            (item for item in table.iter_symbols() if item.name == "jlink_mcp_manifest"),
+            (
+                item
+                for item in table.iter_symbols()
+                if item.name == "jlink_mcp_manifest"
+            ),
             None,
         )
         if symbol is None or not isinstance(symbol["st_shndx"], int):
             raise ValueError("ELF has no concrete jlink_mcp_manifest symbol")
         section = elf.get_section(symbol["st_shndx"])
-        offset = int(section["sh_offset"]) + int(symbol["st_value"]) - int(
-            section["sh_addr"]
+        offset = (
+            int(section["sh_offset"])
+            + int(symbol["st_value"])
+            - int(section["sh_addr"])
         )
         return offset, int(symbol["st_value"]), int(symbol["st_size"])
 
@@ -169,13 +173,17 @@ def _layout_from_blob(blob: bytes | bytearray) -> tuple[int, bytes, int, int]:
         for segment in elf.iter_segments():
             address = int(segment["p_paddr"])
             size = int(segment["p_filesz"])
-            if segment["p_type"] == "PT_LOAD" and size and 0x08000000 <= address < 0x10000000:
+            if (
+                segment["p_type"] == "PT_LOAD"
+                and size
+                and 0x08000000 <= address < 0x10000000
+            ):
                 segments.append((address, segment.data()))
         if not segments:
             raise ValueError("ELF has no loadable STM32 flash segments")
         start = min(address for address, _ in segments)
         end = max(address + len(data) for address, data in segments)
-        image = bytearray(b"\xFF" * (end - start))
+        image = bytearray(b"\xff" * (end - start))
         for address, data in segments:
             image[address - start : address - start + len(data)] = data
 

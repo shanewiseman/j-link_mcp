@@ -6,26 +6,27 @@ import hashlib
 import json
 from pathlib import Path
 
+import jlink_mcp_arduino_giga.workflows as workflow_module
 import pytest
+from jlink_mcp_arduino_giga.config import ArduinoGigaConfig
+from jlink_mcp_arduino_giga.models import (
+    BuildResult,
+)
+from jlink_mcp_arduino_giga.models import (
+    DeviceSelector as GigaDeviceSelector,
+)
+from jlink_mcp_arduino_giga.profiles import GIGA_R1, TargetCore
+from jlink_mcp_arduino_giga.workflows import ArduinoGigaWorkflows
 
+from jlink_mcp.extensions.api import ExtensionRegistry
+from jlink_mcp.leases import ProbeBusy
 from jlink_mcp.models import (
     Artifact,
     DependencyCheck,
     DependencyReport,
     DeviceSelector,
-    ValidationReport,
 )
-from jlink_mcp.extensions.api import ExtensionRegistry
-from jlink_mcp.leases import ProbeBusy
 from jlink_mcp.service import JLinkService
-from jlink_mcp_arduino_giga.config import ArduinoGigaConfig
-from jlink_mcp_arduino_giga.profiles import GIGA_R1, TargetCore
-from jlink_mcp_arduino_giga.models import (
-    BuildResult,
-    DeviceSelector as GigaDeviceSelector,
-)
-from jlink_mcp_arduino_giga.workflows import ArduinoGigaWorkflows
-import jlink_mcp_arduino_giga.workflows as workflow_module
 
 from .conftest import BOARD, PROBE, make_result, selector
 
@@ -86,7 +87,9 @@ async def test_build_identity_git_and_source_tree(workflow, monkeypatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_build_firmware_success_and_failure_artifacts(workflow, monkeypatch) -> None:
+async def test_build_firmware_success_and_failure_artifacts(
+    workflow, monkeypatch
+) -> None:
     sketch = workflow.settings.workspace_root / "m7"
     sketch.mkdir()
     (sketch / "m7.ino").write_text("void setup(){} void loop(){}")
@@ -126,7 +129,9 @@ async def test_build_firmware_success_and_failure_artifacts(workflow, monkeypatc
         "finalize_fixture_elf",
         lambda path: {"flash_start": "0x08000000", "image_size": 3},
     )
-    monkeypatch.setattr(workflow_module, "verify_fixture_elf", lambda path: {"ok": True})
+    monkeypatch.setattr(
+        workflow_module, "verify_fixture_elf", lambda path: {"ok": True}
+    )
     monkeypatch.setattr(
         workflow_module,
         "inspect_elf",
@@ -134,7 +139,15 @@ async def test_build_firmware_success_and_failure_artifacts(workflow, monkeypatc
     )
     build = await workflow.build_firmware("m7", core=TargetCore.M7)
     kinds = {artifact.kind for artifact in build.artifacts}
-    assert {"elf", "bin", "hex", "symbols", "disassembly", "manifest", "checksums"} <= kinds
+    assert {
+        "elf",
+        "bin",
+        "hex",
+        "symbols",
+        "disassembly",
+        "manifest",
+        "checksums",
+    } <= kinds
     header = next(Path(build.build_directory).glob("source/m7/JLinkMCPBuildIdentity.h"))
     assert "a" * 40 in header.read_text()
     manifest = ArduinoGigaWorkflows._build_manifest(build)
@@ -174,14 +187,18 @@ async def test_build_properties_and_generated_artifacts(workflow, monkeypatch) -
     async def run(argv, **kwargs):
         calls.append([str(x) for x in argv])
         if "--show-properties" in argv:
-            return make_result(stdout=f"build.compiler_path={compiler}\ninvalid line\nx=y=z\n")
+            return make_result(
+                stdout=f"build.compiler_path={compiler}\ninvalid line\nx=y=z\n"
+            )
         if "arm-none-eabi-objcopy" in str(argv[0]):
             Path(argv[-1]).write_bytes(b"generated")
             return make_result()
         return make_result(stdout="analysis output")
 
     monkeypatch.setattr(workflow.service.runner, "run", run)
-    properties = await workflow._build_properties(sketch, core=TargetCore.M4, flash_split="75_25")
+    properties = await workflow._build_properties(
+        sketch, core=TargetCore.M4, flash_split="75_25"
+    )
     assert properties["x"] == "y=z"
     await workflow._regenerate_flash_artifacts(
         elf, build_dir=build_dir, properties={"build.compiler_path": str(compiler)}
@@ -212,7 +229,12 @@ async def test_flash_backup_compare_and_restore(workflow, monkeypatch) -> None:
     hex_path = workflow.settings.workspace_root / "image.hex"
     binary = workflow.settings.workspace_root / "image.bin"
     text = workflow.settings.workspace_root / "image.txt"
-    for path, data in ((elf, b"elf"), (hex_path, b"hex"), (binary, b"bin"), (text, b"x")):
+    for path, data in (
+        (elf, b"elf"),
+        (hex_path, b"hex"),
+        (binary, b"bin"),
+        (text, b"x"),
+    ):
         path.write_bytes(data)
     calls = []
 
@@ -231,15 +253,21 @@ async def test_flash_backup_compare_and_restore(workflow, monkeypatch) -> None:
         await workflow.flash_and_verify(str(binary))
     with pytest.raises(ValueError, match="ELF"):
         await workflow.flash_and_verify(str(text))
-    flashed_bin = await workflow.flash_binary(str(binary), 0x08000000, selector=selector())
+    flashed_bin = await workflow.flash_binary(
+        str(binary), 0x08000000, selector=selector()
+    )
     assert flashed_bin.ok
     with pytest.raises(ValueError):
         await workflow.flash_binary(str(elf), 0)
-    backup_result, backup = await workflow.backup_flash(0x08000000, 64, selector=selector())
+    backup_result, backup = await workflow.backup_flash(
+        0x08000000, 64, selector=selector()
+    )
     assert backup_result.ok and backup and backup.size == 6
     with pytest.raises(ValueError):
         await workflow.backup_flash(-1, 1)
-    compared = await workflow.compare_firmware(str(binary), 0x08000000, selector=selector())
+    compared = await workflow.compare_firmware(
+        str(binary), 0x08000000, selector=selector()
+    )
     assert compared["match"]
     region = await workflow.compare_backup_region(
         str(binary), 0, 0x08000000, 2, selector=selector()
@@ -249,14 +277,18 @@ async def test_flash_backup_compare_and_restore(workflow, monkeypatch) -> None:
         await workflow.compare_backup_region(str(binary), 2, 0, 2)
 
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-    restored = await workflow.restore_backup(str(binary), 0x08000000, digest, selector=selector())
+    restored = await workflow.restore_backup(
+        str(binary), 0x08000000, digest, selector=selector()
+    )
     assert restored["ok"]
     with pytest.raises(ValueError, match="64-character"):
         await workflow.restore_backup(str(binary), 0, "bad")
     with pytest.raises(ValueError, match="does not match"):
         await workflow.restore_backup(str(binary), 0, "0" * 64)
     with pytest.raises(ValueError, match="raw BIN"):
-        await workflow.restore_backup(str(elf), 0, hashlib.sha256(elf.read_bytes()).hexdigest())
+        await workflow.restore_backup(
+            str(elf), 0, hashlib.sha256(elf.read_bytes()).hexdigest()
+        )
 
 
 def _doctor(manifest, ok=True):
@@ -267,7 +299,9 @@ def _doctor(manifest, ok=True):
 
 
 @pytest.mark.asyncio
-async def test_preflight_deploy_and_boot_observation(workflow, manifest, monkeypatch) -> None:
+async def test_preflight_deploy_and_boot_observation(
+    workflow, manifest, monkeypatch
+) -> None:
     async def resolve(value):
         return selector()
 
@@ -326,8 +360,16 @@ async def test_preflight_deploy_and_boot_observation(workflow, manifest, monkeyp
             build_directory=str(directory),
             command=make_result(),
             artifacts=[
-                Artifact.from_path(binary, kind="bin", sha256=hashlib.sha256(binary.read_bytes()).hexdigest()),
-                Artifact.from_path(manifest_path, kind="manifest", sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest()),
+                Artifact.from_path(
+                    binary,
+                    kind="bin",
+                    sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+                ),
+                Artifact.from_path(
+                    manifest_path,
+                    kind="manifest",
+                    sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+                ),
             ],
         )
 
@@ -383,11 +425,7 @@ async def test_preflight_deploy_and_boot_observation(workflow, manifest, monkeyp
     m4_elf.write_bytes(b"m4")
     monkeypatch.setattr(
         "jlink_mcp_arduino_giga.workflows.inspect_elf",
-        lambda path: {
-            "test_symbols": {
-                "jlink_mcp_heartbeat": {"address": 0x20000000}
-            }
-        },
+        lambda path: {"test_symbols": {"jlink_mcp_heartbeat": {"address": 0x20000000}}},
     )
     counters = {TargetCore.M7: 0, TargetCore.M4: 10}
 
@@ -430,11 +468,28 @@ async def test_debug_and_crash_workflows(workflow, monkeypatch) -> None:
         if command == "-thread-info":
             reason = "breakpoint-hit" if thread_count == 0 else "watchpoint-trigger"
             thread_count += 1
-            parsed = {"mi": [{"type": "notify", "message": "stopped", "payload": {"reason": reason}}]}
+            parsed = {
+                "mi": [
+                    {
+                        "type": "notify",
+                        "message": "stopped",
+                        "payload": {"reason": reason},
+                    }
+                ]
+            }
         elif "jlink_mcp_watch_value" in command and "evaluate" in command:
             parsed = {"mi": [{"message": "done", "payload": {"value": "2779077210"}}]}
         elif "read-memory-bytes" in command and command.endswith("16"):
-            parsed = {"mi": [{"message": "done", "payload": {"memory": [{"contents": "00112233445566778899aabbccddeeff"}]}}]}
+            parsed = {
+                "mi": [
+                    {
+                        "message": "done",
+                        "payload": {
+                            "memory": [{"contents": "00112233445566778899aabbccddeeff"}]
+                        },
+                    }
+                ]
+            }
         elif command == "-stack-list-frames":
             parsed = {
                 "mi": [
@@ -478,7 +533,9 @@ async def test_debug_and_crash_workflows(workflow, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_rtt_capture_validation_and_reports(workflow, manifest, monkeypatch) -> None:
+async def test_rtt_capture_validation_and_reports(
+    workflow, manifest, monkeypatch
+) -> None:
     elf = workflow.settings.workspace_root / "fixture.elf"
     elf.write_bytes(b"elf")
 
@@ -536,24 +593,33 @@ async def test_rtt_capture_validation_and_reports(workflow, manifest, monkeypatc
     assert "RTT hello" in captured["text"]
     assert '-interpreter-exec console "monitor exec SetRTTAddr=0x24000004"' in calls
     assert calls[-1] == "stop"
-    assert workflow.service.store.list_operations(limit=1)[0]["action"] == "capture_rtt_evidence"
+    assert (
+        workflow.service.store.list_operations(limit=1)[0]["action"]
+        == "capture_rtt_evidence"
+    )
     logger = await workflow.capture_rtt(str(elf), duration_seconds=0.2, channel=1)
     assert logger["ok"] and logger["backend"] == "rtt-logger"
     with pytest.raises(ValueError):
         await workflow.capture_rtt(str(elf), duration_seconds=0.1)
     with pytest.raises(ValueError):
         await workflow.capture_rtt(str(elf), channel=16)
-    monkeypatch.setattr(workflow_module, "inspect_elf", lambda path: {"test_symbols": {}})
+    monkeypatch.setattr(
+        workflow_module, "inspect_elf", lambda path: {"test_symbols": {}}
+    )
     with pytest.raises(ValueError, match="_SEGGER_RTT"):
         await workflow.capture_rtt(str(elf))
 
     monkeypatch.setattr(workflow.service, "capabilities", lambda: manifest)
     monkeypatch.setattr(workflow.service, "doctor", lambda: _doctor(manifest))
-    report = await workflow.generate_validation_report(title="Unit validation", audit_limit=100)
+    report = await workflow.generate_validation_report(
+        title="Unit validation", audit_limit=100
+    )
     assert report["audit_chain_ok"]
     paths = [Path(item["path"]) for item in report["artifacts"]]
     assert {path.suffix for path in paths} == {".json", ".md"}
-    payload = json.loads(next(path for path in paths if path.suffix == ".json").read_text())
+    payload = json.loads(
+        next(path for path in paths if path.suffix == ".json").read_text()
+    )
     assert payload["title"] == "Unit validation"
     markdown = next(path for path in paths if path.suffix == ".md").read_text()
     assert "## Hardware evidence" in markdown

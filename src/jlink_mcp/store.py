@@ -178,7 +178,9 @@ class AuditStore:
 
     def delete_session(self, session_id: str) -> None:
         with self._lock, self._connect() as connection:
-            connection.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            connection.execute(
+                "DELETE FROM sessions WHERE session_id = ?", (session_id,)
+            )
 
     def clear_stale_sessions(self) -> list[dict[str, Any]]:
         """Remove persisted sessions because their subprocesses cannot survive restart."""

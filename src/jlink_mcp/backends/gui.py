@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 import signal
@@ -10,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 import cv2
 
@@ -29,7 +31,7 @@ class GUIProcess:
 
 class GUIBackend:
     name = "segger-gui"
-    allowed_applications = {
+    allowed_applications: ClassVar[set[str]] = {
         "JFlashExe",
         "JFlashLiteExe",
         "JFlashSPIExe",
@@ -152,7 +154,9 @@ class GUIBackend:
     async def screenshot(self, session_id: str) -> CommandResult:
         self._session(session_id)
         destination = (
-            self.settings.state_root / "screenshots" / f"{session_id}-{uuid.uuid4()}.png"
+            self.settings.state_root
+            / "screenshots"
+            / f"{session_id}-{uuid.uuid4()}.png"
         )
         if scrot := shutil.which("scrot"):
             argv = [scrot, str(destination)]
@@ -256,20 +260,16 @@ class GUIBackend:
         try:
             await asyncio.wait_for(session.process.wait(), timeout=3)
         except TimeoutError:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(session.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
             await session.process.wait()
 
     async def stop_all(self) -> None:
         for session_id in list(self._sessions):
             await self.stop(session_id)
         if self._xvfb and self._xvfb.returncode is None:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(self._xvfb.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
             await self._xvfb.wait()
 
     def _session(self, session_id: str) -> GUIProcess:

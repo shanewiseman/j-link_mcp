@@ -7,7 +7,11 @@ from pydantic import BaseModel, Field
 from jlink_mcp.models import (
     Artifact,
     CommandResult,
+)
+from jlink_mcp.models import (
     DeviceSelector as CoreDeviceSelector,
+)
+from jlink_mcp.models import (
     ValidationReport as CoreValidationReport,
 )
 

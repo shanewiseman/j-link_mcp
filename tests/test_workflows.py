@@ -5,14 +5,13 @@ import hashlib
 from pathlib import Path
 
 import pytest
+from conftest import make_result
+from test_service import SAMPLE_PROFILE, selector
 
 import jlink_mcp.workflows as workflow_module
 from jlink_mcp.extensions.api import ExtensionRegistry
 from jlink_mcp.service import JLinkService
 from jlink_mcp.workflows import Workflows
-
-from conftest import make_result
-from test_service import SAMPLE_PROFILE, selector
 
 
 @pytest.fixture
@@ -50,9 +49,7 @@ async def test_flash_backup_compare_and_restore(workflow, monkeypatch) -> None:
     backup_result, backup = await workflow.backup_flash(
         0x1000, len(b"original"), selector=selector()
     )
-    compared = await workflow.compare_firmware(
-        str(raw), 0x1000, selector=selector()
-    )
+    compared = await workflow.compare_firmware(str(raw), 0x1000, selector=selector())
     restored = await workflow.restore_backup(
         str(raw),
         0x1000,

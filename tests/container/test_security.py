@@ -6,7 +6,6 @@ import subprocess
 
 import pytest
 
-
 ENABLED = os.environ.get("JLINK_MCP_CONTAINER_TEST") == "1"
 pytestmark = [
     pytest.mark.container,
@@ -36,7 +35,9 @@ def test_container_non_root_restricted_and_no_proprietary_payload() -> None:
 
     user = _compose("exec", "-T", "mcp", "id", "-u").strip()
     assert user != "0"
-    status = _compose("exec", "-T", "mcp", "sh", "-c", "grep '^CapEff:' /proc/self/status")
+    status = _compose(
+        "exec", "-T", "mcp", "sh", "-c", "grep '^CapEff:' /proc/self/status"
+    )
     assert status.strip().endswith("0000000000000000")
     mounts = _compose("exec", "-T", "mcp", "sh", "-c", "grep ' / ' /proc/mounts")
     assert "ro" in mounts.split()[3].split(",")

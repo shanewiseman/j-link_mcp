@@ -469,9 +469,7 @@ def encode_tlvs(items: list[tuple[int | FieldId, bytes]]) -> bytes:
     return bytes(output)
 
 
-def decode_tlvs(
-    payload: bytes, *, allowed: set[int] | None = None
-) -> dict[int, bytes]:
+def decode_tlvs(payload: bytes, *, allowed: set[int] | None = None) -> dict[int, bytes]:
     result: dict[int, bytes] = {}
     offset = 0
     while offset < len(payload):
@@ -500,7 +498,9 @@ def _pin_number(value: str) -> int:
 def _scalar(field: str, value: Any) -> bytes:
     if field in {"pin", "chip_select"}:
         value = _pin_number(value)
-    enum_map_name = "protocol_socket" if field == "protocol" and value in {"tcp", "udp"} else field
+    enum_map_name = (
+        "protocol_socket" if field == "protocol" and value in {"tcp", "udp"} else field
+    )
     if isinstance(value, str) and (mapping := _ENUM_VALUES.get(enum_map_name)):
         try:
             value = mapping[value]

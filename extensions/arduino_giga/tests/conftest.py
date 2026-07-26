@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from jlink_mcp_arduino_giga.config import ArduinoGigaConfig
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
@@ -19,7 +20,6 @@ from jlink_mcp.models import (
     ProbeCapabilities,
     USBDevice,
 )
-from jlink_mcp_arduino_giga.config import ArduinoGigaConfig
 
 PROBE = "000802008248"
 BOARD = "0045002B3333511632363530"
@@ -165,9 +165,13 @@ async def session():
     if not token:
         token_file = os.environ.get("JLINK_MCP_TOKEN_FILE", ".token")
         token = Path(token_file).read_text(encoding="utf-8").strip()
-    async with streamablehttp_client(
-        url, headers={"Authorization": f"Bearer {token}"}
-    ) as (read, write, _):
-        async with ClientSession(read, write) as client:
-            await client.initialize()
-            yield client
+    async with (
+        streamablehttp_client(url, headers={"Authorization": f"Bearer {token}"}) as (
+            read,
+            write,
+            _,
+        ),
+        ClientSession(read, write) as client,
+    ):
+        await client.initialize()
+        yield client

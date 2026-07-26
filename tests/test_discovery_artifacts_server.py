@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import shutil
-import stat
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from elftools.common.exceptions import ELFError
 
 from jlink_mcp import discovery, doctor
 from jlink_mcp.artifacts import inspect_elf, registerable_artifact
 from jlink_mcp.models import CapabilityState
-from jlink_mcp.server import BearerTokenASGI, CORE_TOOL_NAMES, MCPRuntime
+from jlink_mcp.server import CORE_TOOL_NAMES, BearerTokenASGI, MCPRuntime
 
 
 class Attributes:
@@ -56,9 +55,7 @@ def test_usb_discovery_udev_and_sysfs_fallback(monkeypatch) -> None:
         children=[tty],
     )
     ignored = Device({}, {"idVendor": b"1234", "idProduct": b"0001"})
-    context = SimpleNamespace(
-        list_devices=lambda **kwargs: [jlink, target, ignored]
-    )
+    context = SimpleNamespace(list_devices=lambda **kwargs: [jlink, target, ignored])
     monkeypatch.setattr(discovery.pyudev, "Context", lambda: context)
     found = discovery.discover_usb_devices()
     assert [item.kind for item in found] == ["jlink", "usb", "usb"]
@@ -88,7 +85,11 @@ def test_tool_and_capability_discovery(
     monkeypatch.setattr(
         discovery.shutil,
         "which",
-        lambda name: f"/usr/bin/{name}" if name in {"Xvfb", "xdotool", "tesseract", "scrot"} else None,
+        lambda name: (
+            f"/usr/bin/{name}"
+            if name in {"Xvfb", "xdotool", "tesseract", "scrot"}
+            else None
+        ),
     )
     usb = [manifest.probes[0].usb, manifest.boards[0].usb]
     monkeypatch.setattr(discovery, "discover_usb_devices", lambda: usb)
@@ -99,7 +100,9 @@ def test_tool_and_capability_discovery(
     assert lookup["gdb-client"].state == CapabilityState.AVAILABLE
     target_registry.register_board_detector(
         "sample-usb",
-        lambda usb: manifest.boards[0] if usb.serial == manifest.boards[0].serial else None,
+        lambda usb: (
+            manifest.boards[0] if usb.serial == manifest.boards[0].serial else None
+        ),
     )
     capability = discovery.capability_manifest(settings, target_registry)
     assert capability.unique_pair
@@ -119,7 +122,9 @@ def test_segger_version_release_notes_and_groups(tmp_path: Path, monkeypatch) ->
     assert discovery._segger_version(root) == "9.62a"
     assert discovery._segger_version(tmp_path / "none") is None
     monkeypatch.setattr(discovery.os, "getgroups", lambda: [123])
-    monkeypatch.setattr(discovery.grp, "getgrgid", lambda gid: SimpleNamespace(gr_name="plugdev"))
+    monkeypatch.setattr(
+        discovery.grp, "getgrgid", lambda gid: SimpleNamespace(gr_name="plugdev")
+    )
     assert discovery.current_groups() == {"plugdev"}
 
 
@@ -137,6 +142,7 @@ def test_dependency_doctor_full_matrix(
     manifest.boards[0].serial_port = str(board_node)
     for tool in ("JLinkExe", "JLinkGDBServerCLExe", "gdb-client", "Xvfb", "xdotool"):
         from jlink_mcp.models import ToolAvailability
+
         manifest.tools.append(
             ToolAvailability(
                 name=tool,
@@ -180,7 +186,7 @@ def _build_synthetic_fixture(tmp_path: Path) -> Path:
         '__attribute__((section(".manifest"))) unsigned char jlink_mcp_manifest[200];\n'
         '__attribute__((section(".ram"))) unsigned char jlink_mcp_test_buffer[32];\n'
         '__attribute__((section(".rtt"))) unsigned char _SEGGER_RTT[64];\n'
-        'void jlink_mcp_breakpoint_site(void) {}\n',
+        "void jlink_mcp_breakpoint_site(void) {}\n",
         encoding="utf-8",
     )
     script = tmp_path / "fixture.ld"
@@ -206,7 +212,7 @@ def test_generic_elf_inspect_and_register(tmp_path: Path) -> None:
     assert artifact.sha256 == hashlib.sha256(elf.read_bytes()).hexdigest()
     invalid = tmp_path / "not-elf"
     invalid.write_bytes(b"not elf")
-    with pytest.raises(Exception):
+    with pytest.raises(ELFError):
         inspect_elf(invalid)
 
 

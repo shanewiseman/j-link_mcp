@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from .config import Settings
 
@@ -35,11 +35,43 @@ _GDB_ALLOWED_MI = (
     "-gdb-set",
 )
 _GDB_ALLOWED_CLI = {
-    "advance", "backtrace", "bt", "break", "clear", "continue", "delete",
-    "disable", "disassemble", "display", "down", "enable", "finish", "frame",
-    "info", "interrupt", "jump", "next", "nexti", "print", "ptype", "return",
-    "run", "set", "step", "stepi", "tbreak", "thread", "undisplay", "until",
-    "up", "watch", "rwatch", "awatch", "where", "x", "monitor",
+    "advance",
+    "backtrace",
+    "bt",
+    "break",
+    "clear",
+    "continue",
+    "delete",
+    "disable",
+    "disassemble",
+    "display",
+    "down",
+    "enable",
+    "finish",
+    "frame",
+    "info",
+    "interrupt",
+    "jump",
+    "next",
+    "nexti",
+    "print",
+    "ptype",
+    "return",
+    "run",
+    "set",
+    "step",
+    "stepi",
+    "tbreak",
+    "thread",
+    "undisplay",
+    "until",
+    "up",
+    "watch",
+    "rwatch",
+    "awatch",
+    "where",
+    "x",
+    "monitor",
 }
 
 
@@ -94,7 +126,11 @@ def validate_gdb_command(command: str) -> str:
             raise UnsafeCommand(f"GDB/MI command is not allowlisted: {first!r}")
     elif command_name.lower() not in _GDB_ALLOWED_CLI:
         raise UnsafeCommand(f"GDB command is not allowlisted: {first!r}")
-    if re.match(r"^set\s+(?:environment|exec-wrapper|auto-load|sysroot|solib-search-path)\b", command, re.I):
+    if re.match(
+        r"^set\s+(?:environment|exec-wrapper|auto-load|sysroot|solib-search-path)\b",
+        command,
+        re.IGNORECASE,
+    ):
         raise UnsafeCommand("GDB host environment/path mutation is not allowed")
     return command
 
@@ -129,7 +165,9 @@ def _validate_embedded_paths(command: str, settings: Settings) -> None:
             try:
                 settings.resolve_allowed_path(path, must_exist=path.exists())
             except (OSError, ValueError) as exc:
-                raise UnsafeCommand(f"path is outside configured roots: {candidate}") from exc
+                raise UnsafeCommand(
+                    f"path is outside configured roots: {candidate}"
+                ) from exc
 
 
 def validate_application_args(args: Iterable[str], settings: Settings) -> list[str]:
@@ -138,7 +176,7 @@ def validate_application_args(args: Iterable[str], settings: Settings) -> list[s
         if _DANGEROUS_SHELL.search(arg) or "\x00" in arg:
             raise UnsafeCommand(f"unsafe application argument: {arg!r}")
         candidate = arg.split("=", 1)[1] if "=" in arg else arg
-        if candidate.startswith("/") or candidate.startswith("."):
+        if candidate.startswith(("/", ".")):
             path = Path(candidate)
             # Paths may point to either user firmware or persistent evidence.
             # Never pass an unresolved absolute/relative path to a SEGGER

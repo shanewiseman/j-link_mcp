@@ -20,8 +20,9 @@ class ArduinoGigaConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     arduino_cli: str = Field(
-        default_factory=lambda: shutil.which("arduino-cli")
-        or "/usr/local/bin/arduino-cli"
+        default_factory=lambda: (
+            shutil.which("arduino-cli") or "/usr/local/bin/arduino-cli"
+        )
     )
     data_root: Path = Field(
         default_factory=lambda: _first_existing(

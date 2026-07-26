@@ -9,7 +9,6 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-
 HIL_ENABLED = os.environ.get("JLINK_MCP_HIL") == "1"
 GUI_ENABLED = os.environ.get("JLINK_MCP_GUI") == "1"
 
@@ -33,12 +32,10 @@ async def session():
     if not token:
         token_file = os.environ.get("JLINK_MCP_TOKEN_FILE", ".token")
         token = Path(token_file).read_text(encoding="utf-8").strip()
-    async with httpx.AsyncClient(
-        headers={"Authorization": f"Bearer {token}"}
-    ) as http_client:
-        async with streamable_http_client(
-            url, http_client=http_client
-        ) as (read, write, _):
-            async with ClientSession(read, write) as client:
-                await client.initialize()
-                yield client
+    async with (
+        httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http_client,
+        streamable_http_client(url, http_client=http_client) as (read, write, _),
+        ClientSession(read, write) as client,
+    ):
+        await client.initialize()
+        yield client
