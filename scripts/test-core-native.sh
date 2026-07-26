@@ -10,6 +10,7 @@ export COVERAGE_FILE=artifacts/.coverage-core
 exec .venv/bin/python -m pytest \
   tests \
   --ignore=tests/container \
+  --basetemp=.ci-cache/pytest-core \
   -m "not hardware and not hil and not container and not gui and not destructive" \
   --junitxml=artifacts/junit-core.xml \
   --cov=jlink_mcp \
