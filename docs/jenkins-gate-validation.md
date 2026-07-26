@@ -34,6 +34,15 @@ Two gateway reliability observations were found:
    create its expected skipped AI-review run, check, or log artifact. The other
    branch builds did.
 
-The final branch and pull-request results should be used to verify the
-all-passing state, pull-request event handling, native-result reuse behavior,
-and PR-only AI review.
+The cleaned branch passed as build
+`1e45f40b-042c-4ded-9236-4aad2e96f2f2`, with all 13 native and
+infrastructure checks passing and the non-PR AI review explicitly skipped.
+Opening PR #5 on that exact SHA created synthetic build
+`d7c9538e-5678-457e-9845-ecf33a62eb2e`: it reused the branch result without a
+Jenkins queue, returned both GitHub statuses successfully, and completed the
+PR-only AI review with no findings.
+
+This final documentation-only synchronization commit is intentionally pushed
+after the PR is open. Its new SHA has no prior passed build, allowing the
+`push` and `pull_request.synchronize` event paths to demonstrate whether fresh
+native tests are established before any later exact-SHA reuse.
