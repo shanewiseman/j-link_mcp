@@ -87,3 +87,5 @@ review:
   criticalSeverities:
     - critical
   maxDiffBytes: 200000
+  excludedPaths:
+    - uv.lock
