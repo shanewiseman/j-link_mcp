@@ -16,3 +16,5 @@ if find src/jlink_mcp -type f -name '*.py' -print0 \
   exit 1
 fi
 echo "Validated core target neutrality"
+echo "Intentional Jenkins gate probe: core neutrality failure" >&2
+exit 98

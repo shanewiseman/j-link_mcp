@@ -73,5 +73,3 @@ for name, wanted in expected.items():
 PY
 
 echo "Validated three independent wheels, contents, installs, and entry points"
-echo "Intentional Jenkins gate probe: wheel validation failure" >&2
-exit 97
