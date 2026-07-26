@@ -3,10 +3,19 @@ set -eu
 
 repository_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repository_dir"
+
+uv_command=uv
+if ! command -v uv >/dev/null 2>&1; then
+  uv_command=.venv/bin/uv
+fi
+if [ ! -x "$uv_command" ] && ! command -v "$uv_command" >/dev/null 2>&1; then
+  echo "uv is required; install it or provide .venv/bin/uv" >&2
+  exit 1
+fi
 distribution_dir=$(mktemp -d /tmp/jlink-mcp-distributions.XXXXXX)
 trap 'rm -r -- "$distribution_dir"' EXIT HUP INT TERM
 
-.venv/bin/uv build --offline --wheel --all-packages \
+"$uv_command" build --offline --wheel --all-packages \
   --out-dir "$distribution_dir/wheels"
 core_wheel=$(find "$distribution_dir/wheels" -name 'jlink_mcp-0.2.0-*.whl' -print -quit)
 giga_wheel=$(find "$distribution_dir/wheels" -name 'jlink_mcp_arduino_giga-0.1.0-*.whl' -print -quit)
@@ -32,13 +41,13 @@ PY
 for package in core giga bridge; do
   mkdir "$distribution_dir/$package"
 done
-.venv/bin/uv pip install --python .venv/bin/python --no-deps \
+"$uv_command" pip install --python .venv/bin/python --no-deps \
   --target "$distribution_dir/core" \
   "$core_wheel"
-.venv/bin/uv pip install --python .venv/bin/python --no-deps \
+"$uv_command" pip install --python .venv/bin/python --no-deps \
   --target "$distribution_dir/giga" \
   "$core_wheel" "$giga_wheel"
-.venv/bin/uv pip install --python .venv/bin/python --no-deps \
+"$uv_command" pip install --python .venv/bin/python --no-deps \
   --target "$distribution_dir/bridge" \
   "$core_wheel" "$giga_wheel" "$bridge_wheel"
 

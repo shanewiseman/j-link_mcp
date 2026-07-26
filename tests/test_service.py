@@ -124,7 +124,7 @@ def test_target_profile_rejects_unsafe_defaults(overrides, message) -> None:
 
 @pytest.mark.parametrize("invalid", ["has space", "!bad", "x" * 129, " padded "])
 def test_target_profiles_reject_unselectable_identifiers(invalid: str) -> None:
-    with pytest.raises(ValueError, match="identifier|canonical"):
+    with pytest.raises(ValueError, match=r"identifier|canonical"):
         CoreProfile(
             id=invalid,
             jlink_device="INVALID",
@@ -137,7 +137,7 @@ def test_target_profiles_reject_unselectable_identifiers(invalid: str) -> None:
         expected_core="Valid-Core",
         expected_cpuid=1,
     )
-    with pytest.raises(ValueError, match="identifier|canonical"):
+    with pytest.raises(ValueError, match=r"identifier|canonical"):
         TargetProfile(
             id=invalid,
             display_name="Invalid",

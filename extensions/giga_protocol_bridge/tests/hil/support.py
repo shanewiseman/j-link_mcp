@@ -28,9 +28,13 @@ async def session():
     if not token:
         token_file = os.environ.get("JLINK_MCP_TOKEN_FILE", ".token")
         token = Path(token_file).read_text(encoding="utf-8").strip()
-    async with streamablehttp_client(
-        url, headers={"Authorization": f"Bearer {token}"}
-    ) as (read, write, _):
-        async with ClientSession(read, write) as client:
-            await client.initialize()
-            yield client
+    async with (
+        streamablehttp_client(url, headers={"Authorization": f"Bearer {token}"}) as (
+            read,
+            write,
+            _,
+        ),
+        ClientSession(read, write) as client,
+    ):
+        await client.initialize()
+        yield client

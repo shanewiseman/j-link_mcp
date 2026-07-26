@@ -50,10 +50,12 @@ class Settings(BaseSettings):
     sys_usb_root: Path = Path("/sys/bus/usb/devices")
 
     gdb_client: str = Field(
-        default_factory=lambda: shutil.which("gdb-multiarch")
-        or shutil.which("gdb")
-        or shutil.which("arm-none-eabi-gdb")
-        or "gdb-multiarch"
+        default_factory=lambda: (
+            shutil.which("gdb-multiarch")
+            or shutil.which("gdb")
+            or shutil.which("arm-none-eabi-gdb")
+            or "gdb-multiarch"
+        )
     )
     default_timeout_seconds: float = Field(default=30.0, gt=0, le=3600)
     max_output_bytes: int = Field(default=4_000_000, ge=1024)

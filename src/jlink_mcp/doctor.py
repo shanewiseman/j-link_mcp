@@ -221,7 +221,9 @@ def tool_version(tools: dict[str, object], name: str) -> str | None:
     return getattr(tool, "version", None) if tool else None
 
 
-def device_access_entries(manifest: object, settings: Settings) -> list[tuple[Path, str]]:
+def device_access_entries(
+    manifest: object, settings: Settings
+) -> list[tuple[Path, str]]:
     entries: dict[Path, str] = {}
     for probe in manifest.probes:
         if probe.usb:

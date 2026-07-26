@@ -272,7 +272,7 @@ def _topological_order(
         if extension_id in visited:
             return
         if extension_id in visiting:
-            cycle = visiting[visiting.index(extension_id) :] + [extension_id]
+            cycle = [*visiting[visiting.index(extension_id) :], extension_id]
             raise ExtensionError("extension dependency cycle: " + " -> ".join(cycle))
         visiting.append(extension_id)
         for dependency in extensions[extension_id].dependencies:

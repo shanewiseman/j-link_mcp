@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 
 import pyatspi
@@ -15,22 +16,17 @@ def node(accessible: object, depth: int = 0) -> dict[str, object]:
         "states": [],
         "children": [],
     }
-    try:
+    with contextlib.suppress(Exception):
         state_set = accessible.getState()
         result["states"] = [
-            pyatspi.stateToString(state)
-            for state in state_set.getStates()
+            pyatspi.stateToString(state) for state in state_set.getStates()
         ]
-    except Exception:
-        pass
     if depth < 8:
         children = []
-        try:
+        with contextlib.suppress(Exception):
             count = min(int(accessible.childCount), 256)
             for index in range(count):
                 children.append(node(accessible.getChildAtIndex(index), depth + 1))
-        except Exception:
-            pass
         result["children"] = children
     return result
 

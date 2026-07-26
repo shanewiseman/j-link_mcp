@@ -5,10 +5,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from jlink_mcp.artifacts import inspect_elf
 from jlink_mcp_arduino_giga import artifacts
 from jlink_mcp_arduino_giga.artifacts import finalize_fixture_elf, verify_fixture_elf
+
+from jlink_mcp.artifacts import inspect_elf
 
 
 def _build_synthetic_fixture(tmp_path: Path) -> Path:
@@ -21,7 +21,7 @@ def _build_synthetic_fixture(tmp_path: Path) -> Path:
         '__attribute__((section(".manifest"))) unsigned char jlink_mcp_manifest[200];\n'
         '__attribute__((section(".ram"))) unsigned char jlink_mcp_test_buffer[32];\n'
         '__attribute__((section(".rtt"))) unsigned char _SEGGER_RTT[64];\n'
-        'void jlink_mcp_breakpoint_site(void) {}\n',
+        "void jlink_mcp_breakpoint_site(void) {}\n",
         encoding="utf-8",
     )
     script = tmp_path / "fixture.ld"

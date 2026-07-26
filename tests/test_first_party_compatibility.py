@@ -8,7 +8,6 @@ from pathlib import Path
 from jlink_mcp.config import Settings
 from jlink_mcp.server import MCPRuntime
 
-
 SCHEMA_HASHES = {
     "assert_debug_fixture": "ecfa5d3111b76a83458a7ff2af5352766a6fab0dfbff4967aa964f4ba07f90d4",
     "boot_and_observe": "c3c1a2900e03c653a7f4627f7b67ae1a2687e07f2c63eccdc302999bd85d04fc",

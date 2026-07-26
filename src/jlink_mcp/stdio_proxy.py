@@ -7,7 +7,9 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.stdio import stdio_server
 
 
-async def _relay(source: anyio.abc.ObjectReceiveStream, destination: anyio.abc.ObjectSendStream) -> None:
+async def _relay(
+    source: anyio.abc.ObjectReceiveStream, destination: anyio.abc.ObjectSendStream
+) -> None:
     async with source, destination:
         async for message in source:
             if isinstance(message, Exception):
@@ -17,7 +19,7 @@ async def _relay(source: anyio.abc.ObjectReceiveStream, destination: anyio.abc.O
 
 async def run_stdio_proxy(url: str, token: str) -> None:
     headers = {"Authorization": f"Bearer {token}"}
-    async with stdio_server() as (stdio_read, stdio_write):
+    async with stdio_server() as (stdio_read, stdio_write):  # noqa: SIM117
         async with streamablehttp_client(url, headers=headers) as (
             http_read,
             http_write,

@@ -93,7 +93,11 @@ def parse_commander_output(output: str) -> dict[str, object]:
     if match := _DLL_VERSION_RE.search(output):
         parsed["dll_version"] = match.group(1)
     parsed["flash_verified"] = bool(
-        re.search(r"(?:verified\s+O\.K\.|Verify(?:Bin)?.*?O\.K\.)", output, re.IGNORECASE | re.DOTALL)
+        re.search(
+            r"(?:verified\s+O\.K\.|Verify(?:Bin)?.*?O\.K\.)",
+            output,
+            re.IGNORECASE | re.DOTALL,
+        )
     )
     lowered = output.lower()
     if "cannot connect" in lowered or "could not connect" in lowered:
@@ -148,9 +152,7 @@ class CommanderBackend(DebugBackend):
             argv.extend(
                 [
                     "-Device",
-                    self.targets.jlink_device(
-                        selector.target_profile, selector.core
-                    ),
+                    self.targets.jlink_device(selector.target_profile, selector.core),
                     "-If",
                     selector.interface,
                     "-Speed",

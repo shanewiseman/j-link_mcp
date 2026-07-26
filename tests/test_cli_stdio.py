@@ -22,7 +22,9 @@ def test_cli_token_mode_0600(tmp_path: Path, monkeypatch, settings) -> None:
     assert token.stat().st_mode & 0o777 == 0o600
 
 
-@pytest.mark.parametrize(("json_mode", "ok", "exit_code"), [(False, True, 0), (True, False, 1)])
+@pytest.mark.parametrize(
+    ("json_mode", "ok", "exit_code"), [(False, True, 0), (True, False, 1)]
+)
 def test_cli_doctor_output(
     json_mode, ok, exit_code, monkeypatch, settings, manifest, capsys
 ) -> None:
@@ -63,7 +65,9 @@ def test_cli_serve_proxy_and_direct(monkeypatch, settings) -> None:
     monkeypatch.setattr(
         cli.anyio, "run", lambda function, *args: asyncio.run(function(*args))
     )
-    monkeypatch.setattr(sys, "argv", ["jlink-mcp", "stdio-proxy", "--url", "http://loop/mcp"])
+    monkeypatch.setattr(
+        sys, "argv", ["jlink-mcp", "stdio-proxy", "--url", "http://loop/mcp"]
+    )
     cli.main()
     assert calls[-1] == ("proxy", "http://loop/mcp", "test-token")
 

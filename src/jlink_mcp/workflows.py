@@ -185,7 +185,9 @@ class Workflows:
         try:
             rtt_address = int(symbols["_SEGGER_RTT"]["address"])
         except KeyError as exc:
-            raise ValueError("ELF does not contain a concrete _SEGGER_RTT symbol") from exc
+            raise ValueError(
+                "ELF does not contain a concrete _SEGGER_RTT symbol"
+            ) from exc
         destination = (
             self.settings.state_root
             / "artifacts"
@@ -202,7 +204,7 @@ class Workflows:
             try:
                 configuration = await self.service.gdb_command(
                     session_id,
-                    '-interpreter-exec console '
+                    "-interpreter-exec console "
                     f'"monitor exec SetRTTAddr=0x{rtt_address:08X}"',
                 )
                 if not configuration.ok:
@@ -363,9 +365,9 @@ class Workflows:
             {
                 str(path)
                 for operation in operations
-                for path in operation["payload"].get("result", {}).get(
-                    "evidence_paths", []
-                )
+                for path in operation["payload"]
+                .get("result", {})
+                .get("evidence_paths", [])
             }
         )
         screenshot_paths = [
@@ -382,8 +384,10 @@ class Workflows:
             f"- Registered artifacts: `{len(artifact_catalog)}`",
             f"- Screenshot evidence: `{len(screenshot_paths)}`",
             "",
-            "The JSON companion is the lossless record and contains complete raw output, "
-            "requests, identities, audit hashes, and structured values.",
+            (
+                "The JSON companion is the lossless record and contains complete raw output, "
+                "requests, identities, audit hashes, and structured values."
+            ),
             "",
             "## Target evidence",
             "",

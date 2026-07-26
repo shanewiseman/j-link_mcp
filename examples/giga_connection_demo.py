@@ -39,9 +39,7 @@ def unpack(result: Any) -> Any:
     raise DemoError("MCP result contained no JSON")
 
 
-def choose_serial(
-    requested: str | None, discovered: str | None, kind: str
-) -> str:
+def choose_serial(requested: str | None, discovered: str | None, kind: str) -> str:
     serial = requested or discovered
     if not serial:
         raise DemoError(
@@ -58,9 +56,7 @@ def summarize_core(result: dict[str, Any], core: str) -> dict[str, Any]:
     dpidr = str(identity.get("dpidr", "")).lower()
     voltage = identity.get("target_voltage")
     if cpuid != EXPECTED[core]:
-        raise DemoError(
-            f"{core.upper()} CPUID {cpuid!r} != expected {EXPECTED[core]}"
-        )
+        raise DemoError(f"{core.upper()} CPUID {cpuid!r} != expected {EXPECTED[core]}")
     if dpidr != EXPECTED["dpidr"]:
         raise DemoError(
             f"{core.upper()} DPIDR {dpidr!r} != expected {EXPECTED['dpidr']}"
@@ -86,9 +82,10 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         health = await http.get(args.url.removesuffix("/mcp") + "/healthz")
         health.raise_for_status()
 
-        async with streamable_http_client(
-            args.url, http_client=http
-        ) as (read, write, _), ClientSession(read, write) as client:
+        async with (
+            streamable_http_client(args.url, http_client=http) as (read, write, _),
+            ClientSession(read, write) as client,
+        ):
             await client.initialize()
             inventory = await client.list_tools()
             required = {
@@ -99,9 +96,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             }
             missing = required - {tool.name for tool in inventory.tools}
             if missing:
-                raise DemoError(
-                    "missing MCP tools: " + ", ".join(sorted(missing))
-                )
+                raise DemoError("missing MCP tools: " + ", ".join(sorted(missing)))
 
             # Required by the repository contract before target operations.
             doctor = unpack(await client.call_tool("dependency_doctor", {}))
@@ -114,9 +109,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 raise DemoError(
                     "required dependency checks failed: " + ", ".join(failed)
                 )
-            capabilities = unpack(
-                await client.call_tool("get_capabilities", {})
-            )
+            capabilities = unpack(await client.call_tool("get_capabilities", {}))
 
             probe_serial = choose_serial(
                 args.probe_serial,
@@ -128,9 +121,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 capabilities.get("selected_board_serial"),
                 "board",
             )
-            probes = {
-                item["serial"]: item for item in capabilities.get("probes", [])
-            }
+            probes = {item["serial"]: item for item in capabilities.get("probes", [])}
             boards = {
                 item["serial"]: item
                 for item in capabilities.get("boards", [])
@@ -144,9 +135,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             if board.get("target_profile") != "arduino_giga_r1":
                 raise DemoError(f"board is not a GIGA R1: {board_serial}")
 
-            enumeration = unpack(
-                await client.call_tool("list_jlink_probes", {})
-            )
+            enumeration = unpack(await client.call_tool("list_jlink_probes", {}))
             if not enumeration.get("ok"):
                 raise DemoError("J-Link Commander enumeration failed")
 
@@ -230,4 +219,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

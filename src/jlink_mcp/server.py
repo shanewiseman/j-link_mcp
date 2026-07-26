@@ -240,9 +240,7 @@ class MCPRuntime:
             reset_type: int | None = None,
         ) -> CommandResult:
             """Reset and halt/run; reset type 2 explicitly uses the reset pin."""
-            return await service.reset(
-                selector, halt=halt, reset_type=reset_type
-            )
+            return await service.reset(selector, halt=halt, reset_type=reset_type)
 
         @mcp.tool(annotations=MUTATING)
         async def halt_target(
@@ -504,9 +502,7 @@ class MCPRuntime:
             artifact_path: str, selector: DeviceSelector | None = None
         ) -> CommandResult:
             """Flash an ELF/HEX artifact, verify it, reset, and run."""
-            return await workflows.flash_and_verify(
-                artifact_path, selector=selector
-            )
+            return await workflows.flash_and_verify(artifact_path, selector=selector)
 
         @mcp.tool(annotations=MUTATING)
         async def flash_binary(
@@ -608,9 +604,7 @@ class MCPRuntime:
             selector: DeviceSelector | None = None,
         ) -> dict[str, Any]:
             """Launch an allowlisted SEGGER GUI in isolated Xvfb."""
-            return await service.start_gui(
-                application, args or [], selector=selector
-            )
+            return await service.start_gui(application, args or [], selector=selector)
 
         @mcp.tool(annotations=MUTATING)
         async def gui_keys(session_id: str, keys: str) -> CommandResult:

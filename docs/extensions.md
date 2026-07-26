@@ -18,9 +18,11 @@ The exported object implements:
 from pydantic import BaseModel, ConfigDict
 from jlink_mcp.extensions import EXTENSION_API_VERSION
 
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
     greeting: str = "hello"
+
 
 class ExampleExtension:
     id = "example_target"
@@ -36,6 +38,7 @@ class ExampleExtension:
 
     def shutdown(self):
         return None
+
 
 extension = ExampleExtension()
 ```

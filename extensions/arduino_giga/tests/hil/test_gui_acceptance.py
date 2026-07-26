@@ -5,7 +5,6 @@ import pytest
 
 from .support import GUI_ENABLED, session, unpack
 
-
 pytestmark = [
     pytest.mark.gui,
     pytest.mark.hardware,
@@ -75,9 +74,7 @@ async def test_installed_segger_gui_accessibility_screenshot_and_ocr(selector) -
                 )
                 assert keys["return_code"] == 0
                 screenshot = unpack(
-                    await client.call_tool(
-                        "gui_screenshot", {"session_id": session_id}
-                    )
+                    await client.call_tool("gui_screenshot", {"session_id": session_id})
                 )
                 assert screenshot["evidence_paths"]
                 ocr = unpack(

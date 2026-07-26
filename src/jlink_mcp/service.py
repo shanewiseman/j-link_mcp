@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import os
 import uuid
@@ -147,11 +148,8 @@ class JLinkService:
         for entry in self.store.list_operations(limit=1000):
             result = entry["payload"].get("result", {})
             probe = result.get("probe_identity", {})
-            if (
-                probe.get("licenses")
-                and not probe_evidence.get("licenses")
-                or not probe_evidence
-                and probe.get("serial")
+            if (probe.get("licenses") and not probe_evidence.get("licenses")) or (
+                not probe_evidence and probe.get("serial")
             ):
                 probe_evidence = probe
         runtime_checks = [
@@ -317,11 +315,10 @@ class JLinkService:
                 )
                 self._validate_identity(result, resolved)
                 return result
-            else:
-                identity = await self._identity_preflight(resolved, lease.lease_id)
-                result = await self.commander.execute(
-                    commands, selector=resolved, timeout=timeout
-                )
+            identity = await self._identity_preflight(resolved, lease.lease_id)
+            result = await self.commander.execute(
+                commands, selector=resolved, timeout=timeout
+            )
             self._validate_identity(identity, resolved)
             result.session_id = lease.lease_id
             identity_data = dict(identity.parsed)
@@ -1330,10 +1327,8 @@ class JLinkService:
     async def stop_gdb(self, session_id: str, *, resume: bool = True) -> None:
         info: dict[str, Any] | None = None
         try:
-            try:
+            with contextlib.suppress(ValueError):
                 info = self.gdb.session_info(session_id)
-            except ValueError:
-                pass
             await self.gdb.stop(session_id, resume=resume)
             self.store.delete_session(session_id)
         finally:

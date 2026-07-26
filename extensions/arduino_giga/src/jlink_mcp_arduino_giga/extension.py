@@ -192,8 +192,7 @@ def _tool_availability(name: str, configured: str | Path) -> ToolAvailability:
 
 def _extension_tools(config: ArduinoGigaConfig) -> list[ToolAvailability]:
     compiler = (
-        config.data_root
-        / "packages/arduino/tools/arm-none-eabi-gcc/7-2017q4/bin"
+        config.data_root / "packages/arduino/tools/arm-none-eabi-gcc/7-2017q4/bin"
     )
     return [
         _tool_availability("arduino-cli", config.arduino_cli),
@@ -218,8 +217,7 @@ def _extension_tools(config: ArduinoGigaConfig) -> list[ToolAvailability]:
         ),
         _tool_availability(
             "imgtool",
-            config.data_root
-            / "packages/arduino/tools/imgtool/1.8.0-arduino.2/imgtool",
+            config.data_root / "packages/arduino/tools/imgtool/1.8.0-arduino.2/imgtool",
         ),
     ]
 
@@ -229,7 +227,9 @@ def _capabilities(
 ) -> CapabilityContribution:
     tools = _extension_tools(config)
     available = {
-        tool.name for tool in [*manifest.tools, *tools] if tool.state == CapabilityState.AVAILABLE
+        tool.name
+        for tool in [*manifest.tools, *tools]
+        if tool.state == CapabilityState.AVAILABLE
     }
     serial_available = any(
         board.target_profile == GIGA_R1.id and board.serial_port
@@ -320,9 +320,7 @@ def _dependencies(
     service: Any,
 ) -> list[DependencyCheck]:
     tools = {tool.name: tool for tool in _extension_tools(config)}
-    platform_root = (
-        config.data_root / "packages/arduino/hardware/mbed_giga/4.6.0"
-    )
+    platform_root = config.data_root / "packages/arduino/hardware/mbed_giga/4.6.0"
     boards = [board for board in manifest.boards if board.target_profile == GIGA_R1.id]
     identities: dict[str, dict[str, Any]] = {}
     for entry in service.store.list_operations(limit=1000):

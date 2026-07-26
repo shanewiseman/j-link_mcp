@@ -4,7 +4,6 @@ import pytest
 
 from .support import HIL_ENABLED, session, unpack
 
-
 pytestmark = [
     pytest.mark.hil,
     pytest.mark.hardware,
@@ -72,8 +71,12 @@ async def test_complete_giga_acceptance_and_restore(selector) -> None:
         )
         assert preflight["ok"]
         assert preflight["preparation"]["ok"]
-        assert preflight["m7_identity"]["target_identity"]["cpuid"].lower() == "0x411fc271"
-        assert preflight["m4_identity"]["target_identity"]["cpuid"].lower() == "0x410fc241"
+        assert (
+            preflight["m7_identity"]["target_identity"]["cpuid"].lower() == "0x411fc271"
+        )
+        assert (
+            preflight["m4_identity"]["target_identity"]["cpuid"].lower() == "0x410fc241"
+        )
         assert preflight["register_snapshot"]["ok"]
 
         backup = unpack(
@@ -199,7 +202,10 @@ async def test_complete_giga_acceptance_and_restore(selector) -> None:
                 result = unpack(
                     await client.call_tool(
                         "flash_and_verify",
-                        {"artifact_path": _artifact(m7, kind)["path"], "selector": selector},
+                        {
+                            "artifact_path": _artifact(m7, kind)["path"],
+                            "selector": selector,
+                        },
                     )
                 )
                 assert result["return_code"] == 0
@@ -208,14 +214,22 @@ async def test_complete_giga_acceptance_and_restore(selector) -> None:
             result = unpack(
                 await client.call_tool(
                     "flash_binary",
-                    {"artifact_path": m7_bin["path"], "address": address, "selector": selector},
+                    {
+                        "artifact_path": m7_bin["path"],
+                        "address": address,
+                        "selector": selector,
+                    },
                 )
             )
             assert result["return_code"] == 0
             compared = unpack(
                 await client.call_tool(
                     "compare_firmware",
-                    {"artifact_path": m7_bin["path"], "address": address, "selector": selector},
+                    {
+                        "artifact_path": m7_bin["path"],
+                        "address": address,
+                        "selector": selector,
+                    },
                 )
             )
             assert compared["match"]
@@ -255,9 +269,9 @@ async def test_complete_giga_acceptance_and_restore(selector) -> None:
             )
         )
         assert reset["ok"]
-        assert unpack(
-            await client.call_tool("connect_target", {"selector": selector})
-        )["ok"]
+        assert unpack(await client.call_tool("connect_target", {"selector": selector}))[
+            "ok"
+        ]
         report = unpack(
             await client.call_tool(
                 "generate_validation_report", {"title": "GIGA HIL acceptance"}

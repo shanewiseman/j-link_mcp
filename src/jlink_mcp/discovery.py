@@ -167,11 +167,17 @@ def discover_tools(settings: Settings) -> list[ToolAvailability]:
             else None,
         ),
     ):
-        path = configured if configured and Path(configured).is_file() else shutil.which(name)
+        path = (
+            configured
+            if configured and Path(configured).is_file()
+            else shutil.which(name)
+        )
         tools.append(
             ToolAvailability(
                 name=name,
-                state=(CapabilityState.AVAILABLE if path else CapabilityState.UNAVAILABLE),
+                state=(
+                    CapabilityState.AVAILABLE if path else CapabilityState.UNAVAILABLE
+                ),
                 path=str(path) if path else None,
                 reason=None if path else "not installed or not in PATH",
             )
@@ -324,7 +330,9 @@ def capability_manifest(
                 "RTT Logger or a concrete control-block symbol is unavailable",
             ),
             "validation_report": detail(
-                "validation_report", ["persistent state"], "Persistent state is unavailable"
+                "validation_report",
+                ["persistent state"],
+                "Persistent state is unavailable",
             ),
         },
         features={
@@ -351,7 +359,9 @@ def capability_manifest(
             ),
             "ozone": CapabilityAvailability(
                 state=_tool_state(available, "Ozone"),
-                reason=None if "Ozone" in available else "Optional Ozone package is not mounted",
+                reason=None
+                if "Ozone" in available
+                else "Optional Ozone package is not mounted",
             ),
             "systemview": CapabilityAvailability(
                 state=_tool_state(available, "SystemView"),
@@ -434,17 +444,13 @@ def capability_manifest(
 
 def _tool_state(available: set[str], name: str) -> CapabilityState:
     return (
-        CapabilityState.AVAILABLE
-        if name in available
-        else CapabilityState.UNAVAILABLE
+        CapabilityState.AVAILABLE if name in available else CapabilityState.UNAVAILABLE
     )
 
 
 def _tools_state(available: set[str], names: set[str]) -> CapabilityState:
     return (
-        CapabilityState.AVAILABLE
-        if names <= available
-        else CapabilityState.UNAVAILABLE
+        CapabilityState.AVAILABLE if names <= available else CapabilityState.UNAVAILABLE
     )
 
 

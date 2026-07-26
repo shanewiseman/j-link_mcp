@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 import uuid
@@ -54,34 +55,26 @@ class ProcessRunner:
             )
             return_code = process.returncode
         except asyncio.CancelledError:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
             try:
                 await asyncio.wait_for(process.wait(), timeout=3)
             except TimeoutError:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
                 await process.wait()
             raise
         except TimeoutError:
             timed_out = True
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
             try:
                 stdout_raw, stderr_raw = await asyncio.wait_for(
                     process.communicate(), timeout=3
                 )
             except TimeoutError:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
                 stdout_raw, stderr_raw = await process.communicate()
             return_code = process.returncode
 

@@ -151,7 +151,7 @@ class CapabilityManifest(BaseModel):
     raw_surfaces: list[str] = Field(default_factory=list)
     atomic_tools: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
-    extensions: list["ExtensionCapability"] = Field(default_factory=list)
+    extensions: list[ExtensionCapability] = Field(default_factory=list)
     unique_pair: bool = False
     selected_probe_serial: str | None = None
     selected_board_serial: str | None = None
@@ -214,8 +214,13 @@ class Artifact(BaseModel):
 
     @classmethod
     def from_path(
-        cls, path: Path, *, kind: str, sha256: str, metadata: dict[str, Any] | None = None
-    ) -> "Artifact":
+        cls,
+        path: Path,
+        *,
+        kind: str,
+        sha256: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> Artifact:
         return cls(
             path=str(path),
             sha256=sha256,

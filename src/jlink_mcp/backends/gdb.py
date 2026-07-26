@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import socket
 import uuid
@@ -107,7 +108,9 @@ class GDBBackend:
             f"-target-select remote 127.0.0.1:{gdb_port}", timeout_sec=timeout
         )
         if any(
-            item.get("message") == "error" for item in response if isinstance(item, dict)
+            item.get("message") == "error"
+            for item in response
+            if isinstance(item, dict)
         ):
             gdb.exit()
             server.terminate()
@@ -169,7 +172,9 @@ class GDBBackend:
             error = str(exc)
         finished = datetime.now(UTC)
         errors = [
-            item for item in response if isinstance(item, dict) and item.get("message") == "error"
+            item
+            for item in response
+            if isinstance(item, dict) and item.get("message") == "error"
         ]
         state_after = TargetState.UNKNOWN
         if command.startswith(("-exec-continue", "continue")):
@@ -276,26 +281,20 @@ class GDBBackend:
             session = self._sessions.pop(session_id, None)
         if not session:
             return
-        try:
+        with contextlib.suppress(Exception):
             if resume:
                 session.gdb.write("-exec-continue", timeout_sec=2)
-        except Exception:
-            pass
         try:
             session.gdb.exit()
         finally:
             if session.server.returncode is None:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(session.server.pid, 15)
-                except ProcessLookupError:
-                    pass
                 try:
                     await asyncio.wait_for(session.server.wait(), timeout=3)
                 except TimeoutError:
-                    try:
+                    with contextlib.suppress(ProcessLookupError):
                         os.killpg(session.server.pid, 9)
-                    except ProcessLookupError:
-                        pass
                     await session.server.wait()
 
     async def stop_all(self) -> None:

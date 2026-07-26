@@ -95,6 +95,23 @@ docker compose --env-file .env.hardware \
 Hardware-safe backup, validation, and restoration procedures live in the
 [Arduino GIGA extension documentation](extensions/arduino_giga/docs/hardware-validation.md).
 
+## Hardware-free validation
+
+Bootstrap the locked workspace once, then run the complete native validation
+without Docker, SEGGER software, a probe, or a target:
+
+```sh
+scripts/ci-bootstrap.sh
+scripts/validate-native.sh
+```
+
+The native gate checks Ruff and the frozen lock, runs the core and both
+first-party extension suites with independent 80% branch-coverage thresholds,
+generates JUnit and Cobertura reports under `artifacts/`, validates CycloneDX
+inventories and all three wheels, and enforces core-neutrality and proprietary
+artifact boundaries. Jenkins consumes the same commands from
+`.jenkins/pipeline.yaml` and permits egress only during the bootstrap step.
+
 ## Safety and evidence
 
 Target-changing calls resolve a registered profile, select stable identities,

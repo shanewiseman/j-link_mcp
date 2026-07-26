@@ -8,7 +8,6 @@ import pytest
 
 from .support import session, unpack
 
-
 PROTOCOL_HIL_ENABLED = os.environ.get("JLINK_MCP_PROTOCOL_HIL") == "1"
 PROTOCOLS = ("spi", "i2c", "uart", "can", "usb", "wifi", "ble", "gpio")
 TOOLS = {
@@ -46,10 +45,12 @@ def _fixtures() -> dict[str, dict]:
     path = Path(raw_path).expanduser().resolve(strict=True)
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict) or set(payload) - set(PROTOCOLS):
-        raise ValueError("protocol HIL fixture JSON must map only supported protocol names")
+        raise ValueError(
+            "protocol HIL fixture JSON must map only supported protocol names"
+        )
     for protocol, case in payload.items():
         if not isinstance(case, dict) or not isinstance(case.get("actions"), list):
-            raise ValueError(f"{protocol} fixture requires an actions list")
+            raise TypeError(f"{protocol} fixture requires an actions list")
     return payload
 
 
@@ -76,7 +77,9 @@ async def test_protocol_bridge_fixture_matrix_and_restore(selector, capsys) -> N
         if protocol not in fixtures
     }
     if not fixtures:
-        pytest.skip("all protocol fixtures unavailable: " + json.dumps(statuses, sort_keys=True))
+        pytest.skip(
+            "all protocol fixtures unavailable: " + json.dumps(statuses, sort_keys=True)
+        )
 
     original = None
     restored = False
@@ -123,7 +126,9 @@ async def test_protocol_bridge_fixture_matrix_and_restore(selector, capsys) -> N
             assert deployed["flash"]["ok"]
             assert deployed["handshake"]["wire_version"] == 1
             status = unpack(
-                await client.call_tool("get_protocol_bridge_status", {"selector": selector})
+                await client.call_tool(
+                    "get_protocol_bridge_status", {"selector": selector}
+                )
             )
             assert status["wire_version"] == 1
             for protocol, case in fixtures.items():
@@ -145,7 +150,7 @@ async def test_protocol_bridge_fixture_matrix_and_restore(selector, capsys) -> N
                         "state": "available",
                         "reason": "configured physical fixture passed every declared action",
                     }
-                except Exception as exc:  # restoration must run before surfacing failure
+                except Exception as exc:  # noqa: BLE001 -- restoration precedes failure
                     statuses[protocol] = {
                         "state": "failed",
                         "reason": f"{type(exc).__name__}: {exc}",
