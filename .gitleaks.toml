@@ -1,0 +1,7 @@
+title = "JenkinsService controlled gate probe"
+
+[[rules]]
+id = "jenkinsservice-controlled-probe"
+description = "Detect the harmless JenkinsService CI sentinel"
+regex = '''JENKINSSERVICE_GITLEAKS_PROBE_[A-Z]+'''
+tags = ["ci-probe"]
